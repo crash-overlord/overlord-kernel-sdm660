@@ -720,7 +720,7 @@ static unsigned long lowmem_scan(struct shrinker *s, struct shrink_control *sc)
 //				  other_free, other_file,
 //				  selected_oom_score_adj);
 	} else {
-		//trace_almk_shrink(1, ret, other_free, other_file, 0);
+//		trace_almk_shrink(1, ret, other_free, other_file, 0);
 		rcu_read_unlock();
 	}
 
