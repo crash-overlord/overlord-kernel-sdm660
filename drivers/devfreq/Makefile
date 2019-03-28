@@ -7,6 +7,8 @@ obj-$(CONFIG_DEVFREQ_GOV_USERSPACE)	+= governor_userspace.o
 obj-$(CONFIG_DEVFREQ_GOV_QCOM_ADRENO_TZ) += governor_msm_adreno_tz.o
 obj-$(CONFIG_DEVFREQ_GOV_CPUFREQ)	+= governor_cpufreq.o
 obj-$(CONFIG_QCOM_BIMC_BWMON)		+= bimc-bwmon.o
+obj-$(CONFIG_ADRENO_IDLER)		+= adreno_idler.o
+obj-$(CONFIG_SIMPLE_GPU_ALGORITHM)	+= simple_gpu_algorithm.o
 obj-$(CONFIG_ARMBW_HWMON)		+= armbw-pm.o
 obj-$(CONFIG_ARM_MEMLAT_MON)		+= arm-memlat-mon.o
 obj-$(CONFIG_QCOMCCI_HWMON)		+= msmcci-hwmon.o
@@ -24,7 +26,14 @@ obj-$(CONFIG_ARM_EXYNOS5_BUS_DEVFREQ)	+= exynos/
 obj-$(CONFIG_ARM_TEGRA_DEVFREQ)		+= tegra-devfreq.o
 obj-$(CONFIG_QCOM_DEVFREQ_DEVBW)		+= devfreq_devbw.o
 obj-$(CONFIG_DEVFREQ_SIMPLE_DEV)	+= devfreq_simple_dev.o
-obj-$(CONFIG_DEVFREQ_SPDM) 		+= devfreq_spdm.o devfreq_spdm_debugfs.o
+obj-$(CONFIG_DEVFREQ_SPDM) 		+= devfreq_spdm.o
+
+ifdef CONFIG_DEBUG_FS
+obj-$(CONFIG_DEVFREQ_SPDM) 		+= devfreq_spdm_debugfs.o
+endif
 
 # DEVFREQ Event Drivers
 obj-$(CONFIG_PM_DEVFREQ_EVENT)		+= event/
+
+# DEVFREQ Boost
+obj-$(CONFIG_DEVFREQ_BOOST)		+= devfreq_boost.o
