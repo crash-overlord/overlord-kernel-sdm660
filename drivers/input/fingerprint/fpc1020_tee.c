@@ -42,12 +42,6 @@
 #include <linux/fb.h>
 #include <linux/mdss_io_util.h>
 
-#ifdef CONFIG_TOUCHSCREEN_COMMON
-#include <linux/input.h>
-#include <linux/input/tp_common.h>
-#endif
-
-#define FPC1020_NAME "fpc1020"
 
 #define FPC_TTW_HOLD_TIME 2000
 #define FP_UNLOCK_REJECTION_TIMEOUT (FPC_TTW_HOLD_TIME - 500)
@@ -63,7 +57,7 @@
 #define NUM_PARAMS_REG_ENABLE_SET 2
 #define PROC_NAME  "hwinfo"
 
-#define tyt_debug printk("tyt %s:%d\n", __func__, __LINE__)
+#define tyt_debug printk("tyt %s:%d\n",__func__,__LINE__) 
 static struct proc_dir_entry *proc_entry;
 extern int fpsensor;
 
@@ -96,16 +90,13 @@ struct fpc1020_data {
 	struct wake_lock ttw_wl;
 	int irq_gpio;
 	int rst_gpio;
-	struct mutex lock; /* To set/get exported values in sysfs */
+	struct rt_mutex lock; /* To set/get exported values in sysfs */
 	bool prepared;
 	atomic_t wakeup_enabled; /* Used both in ISR and non-ISR */
 	struct notifier_block fb_notifier;
 	bool fb_black;
 	bool wait_finger_down;
 	struct work_struct work;
-#ifdef CONFIG_TOUCHSCREEN_COMMON
-	struct input_handler input_handler;
-#endif
 };
 
 static int vreg_setup(struct fpc1020_data *fpc1020, const char *name,
@@ -115,7 +106,7 @@ static int vreg_setup(struct fpc1020_data *fpc1020, const char *name,
 	int rc;
 	struct regulator *vreg;
 	struct device *dev = fpc1020->dev;
-	tyt_debug;
+        tyt_debug;
 	for (i = 0; i < ARRAY_SIZE(fpc1020->vreg); i++) {
 		const char *n = vreg_conf[i].name;
 
@@ -190,7 +181,7 @@ static ssize_t clk_enable_set(struct device *dev,
 	dev_dbg(dev,
 		"clk_enable sysfs node not enabled in platform driver\n");
 
-	tyt_debug;
+        tyt_debug;
 	return count;
 }
 static DEVICE_ATTR(clk_enable, S_IWUSR, NULL, clk_enable_set);
@@ -238,7 +229,7 @@ static int select_pin_ctl(struct fpc1020_data *fpc1020, const char *name)
 	for (i = 0; i < ARRAY_SIZE(fpc1020->pinctrl_state); i++) {
 		const char *n = pctl_names[i];
 
-	tyt_debug;
+        tyt_debug;
 		if (!strncmp(n, name, strlen(n))) {
 			rc = pinctrl_select_state(fpc1020->fingerprint_pinctrl,
 					fpc1020->pinctrl_state[i]);
@@ -263,11 +254,11 @@ static ssize_t pinctl_set(struct device *dev,
 	struct fpc1020_data *fpc1020 = dev_get_drvdata(dev);
 	int rc;
 
-	mutex_lock(&fpc1020->lock);
+	rt_mutex_lock(&fpc1020->lock);
 	rc = select_pin_ctl(fpc1020, buf);
-	mutex_unlock(&fpc1020->lock);
+	rt_mutex_unlock(&fpc1020->lock);
 
-	tyt_debug;
+        tyt_debug;
 	return rc ? rc : count;
 }
 static DEVICE_ATTR(pinctl_set, S_IWUSR, NULL, pinctl_set);
@@ -290,10 +281,10 @@ static ssize_t regulator_enable_set(struct device *dev,
 	else
 		return -EINVAL;
 
-	tyt_debug;
-	mutex_lock(&fpc1020->lock);
+        tyt_debug;
+	rt_mutex_lock(&fpc1020->lock);
 	rc = vreg_setup(fpc1020, name, enable);
-	mutex_unlock(&fpc1020->lock);
+	rt_mutex_unlock(&fpc1020->lock);
 
 	return rc ? rc : count;
 }
@@ -305,7 +296,7 @@ static int hw_reset(struct fpc1020_data *fpc1020)
 	struct device *dev = fpc1020->dev;
 	int rc = select_pin_ctl(fpc1020, "fpc1020_reset_active");
 
-	tyt_debug;
+        tyt_debug;
 	if (rc)
 		goto exit;
 	usleep_range(RESET_HIGH_SLEEP1_MIN_US, RESET_HIGH_SLEEP1_MAX_US);
@@ -334,14 +325,14 @@ static ssize_t hw_reset_set(struct device *dev,
 	struct fpc1020_data *fpc1020 = dev_get_drvdata(dev);
 
 	if (!strncmp(buf, "reset", strlen("reset"))) {
-		mutex_lock(&fpc1020->lock);
+		rt_mutex_lock(&fpc1020->lock);
 		rc = hw_reset(fpc1020);
-		mutex_unlock(&fpc1020->lock);
+		rt_mutex_unlock(&fpc1020->lock);
 	} else {
 		return -EINVAL;
 	}
 
-	tyt_debug;
+        tyt_debug;
 	return rc ? rc : count;
 }
 static DEVICE_ATTR(hw_reset, S_IWUSR, NULL, hw_reset_set);
@@ -362,7 +353,7 @@ static int device_prepare(struct fpc1020_data *fpc1020, bool enable)
 {
 	int rc;
 
-	mutex_lock(&fpc1020->lock);
+	rt_mutex_lock(&fpc1020->lock);
 	if (enable && !fpc1020->prepared) {
 		fpc1020->prepared = true;
 		select_pin_ctl(fpc1020, "fpc1020_reset_reset");
@@ -404,7 +395,7 @@ exit:
 	} else {
 		rc = 0;
 	}
-	mutex_unlock(&fpc1020->lock);
+	rt_mutex_unlock(&fpc1020->lock);
 
 	return rc;
 }
@@ -441,16 +432,16 @@ static ssize_t wakeup_enable_set(struct device *dev,
 	struct fpc1020_data *fpc1020 = dev_get_drvdata(dev);
 	ssize_t ret = count;
 
-	mutex_lock(&fpc1020->lock);
+	rt_mutex_lock(&fpc1020->lock);
 	if (!strncmp(buf, "enable", strlen("enable")))
 		atomic_set(&fpc1020->wakeup_enabled, 1);
 	else if (!strncmp(buf, "disable", strlen("disable")))
 		atomic_set(&fpc1020->wakeup_enabled, 0);
 	else
 		ret = -EINVAL;
-	mutex_unlock(&fpc1020->lock);
+	rt_mutex_unlock(&fpc1020->lock);
 
-	tyt_debug;
+        tyt_debug;
 	return ret;
 }
 static DEVICE_ATTR(wakeup_enable, S_IWUSR, NULL, wakeup_enable_set);
@@ -481,7 +472,7 @@ static ssize_t irq_ack(struct device *dev,
 
 	dev_dbg(fpc1020->dev, "%s\n", __func__);
 
-	tyt_debug;
+        tyt_debug;
 	return count;
 }
 static DEVICE_ATTR(irq, S_IRUSR | S_IWUSR, irq_get, irq_ack);
@@ -514,7 +505,7 @@ static irqreturn_t fpc1020_irq_handler(int irq, void *handle)
 
 	dev_dbg(fpc1020->dev, "%s\n", __func__);
 
-	tyt_debug;
+        tyt_debug;
 	if (atomic_read(&fpc1020->wakeup_enabled)) {
 		wake_lock_timeout(&fpc1020->ttw_wl,
 					msecs_to_jiffies(FPC_TTW_HOLD_TIME));
@@ -525,7 +516,7 @@ static irqreturn_t fpc1020_irq_handler(int irq, void *handle)
 		printk("%s enter\n", __func__);
 		fpc1020->wait_finger_down = false;
 		schedule_work(&fpc1020->work);
-	}
+	}  
 	return IRQ_HANDLED;
 }
 
@@ -542,7 +533,7 @@ static int fpc1020_request_named_gpio(struct fpc1020_data *fpc1020,
 	}
 	*gpio = rc;
 
-	tyt_debug;
+        tyt_debug;
 	rc = devm_gpio_request(dev, *gpio, label);
 	if (rc) {
 		dev_err(dev, "failed to request gpio %d\n", *gpio);
@@ -591,16 +582,16 @@ static struct notifier_block fpc_notif_block = {
 	.notifier_call = fpc_fb_notif_callback,
 };
 
-static int proc_show_ver(struct seq_file *file, void *v)
+static int proc_show_ver(struct seq_file *file,void *v)
 {
-	seq_printf(file, "Fingerprint: FPC\n");
+	seq_printf(file,"Fingerprint: FPC\n");
 	return 0;
 }
 
-static int proc_open(struct inode *inode, struct file *file)
+static int proc_open(struct inode *inode,struct file *file)
 {
 	printk("fpc proc_open\n");
-	single_open(file, proc_show_ver, NULL);
+	single_open(file,proc_show_ver,NULL);
 	return 0;
 }
 
@@ -610,68 +601,6 @@ static const struct file_operations proc_file_fpc_ops = {
 	.read = seq_read,
 	.release = single_release,
 };
-
-#ifdef CONFIG_TOUCHSCREEN_COMMON
-static int input_connect(struct input_handler *handler,
-		struct input_dev *dev, const struct input_device_id *id) {
-	int rc;
-	struct input_handle *handle;
-	struct fpc1020_data *fpc1020 =
-		container_of(handler, struct fpc1020_data, input_handler);
-
-	if (!strstr(dev->name, "uinput-fpc"))
-		return -ENODEV;
-
-	handle = kzalloc(sizeof(struct input_handle), GFP_KERNEL);
-	if (!handle)
-		return -ENOMEM;
-
-	handle->dev = dev;
-	handle->handler = handler;
-	handle->name = FPC1020_NAME;
-	handle->private = fpc1020;
-
-	rc = input_register_handle(handle);
-	if (rc)
-		goto err_input_register_handle;
-
-	rc = input_open_device(handle);
-	if (rc)
-		goto err_input_open_device;
-
-	return 0;
-
-err_input_open_device:
-	input_unregister_handle(handle);
-err_input_register_handle:
-	kfree(handle);
-	return rc;
-}
-
-static bool input_filter(struct input_handle *handle, unsigned int type,
-		unsigned int code, int value)
-{
-	if (code == KEY_HOME) {
-		return !capacitive_keys_enabled;
-	}
-	return false;
-}
-
-static void input_disconnect(struct input_handle *handle)
-{
-	input_close_device(handle);
-	input_unregister_handle(handle);
-	kfree(handle);
-}
-
-static const struct input_device_id ids[] = {
-	{
-		.flags = INPUT_DEVICE_ID_MATCH_EVBIT,
-		.evbit = { BIT_MASK(EV_KEY) },
-	},
-	{ },
-};
-#endif
 
 static int fpc1020_probe(struct platform_device *pdev)
 {
@@ -683,7 +612,7 @@ static int fpc1020_probe(struct platform_device *pdev)
 	struct fpc1020_data *fpc1020 = devm_kzalloc(dev, sizeof(*fpc1020),
 			GFP_KERNEL);
 
-	tyt_debug;
+        tyt_debug;
 	if (!fpc1020) {
 		dev_err(dev,
 			"failed to allocate memory for struct fpc1020_data\n");
@@ -750,13 +679,13 @@ static int fpc1020_probe(struct platform_device *pdev)
 
 	atomic_set(&fpc1020->wakeup_enabled, 0);
 
-	irqf = IRQF_TRIGGER_RISING | IRQF_ONESHOT;
+	irqf = IRQF_TRIGGER_RISING | IRQF_ONESHOT | IRQF_PERF_CRITICAL;
 	if (of_property_read_bool(dev->of_node, "fpc,enable-wakeup")) {
 		irqf |= IRQF_NO_SUSPEND;
 		device_init_wakeup(dev, 1);
 	}
 
-	mutex_init(&fpc1020->lock);
+	rt_mutex_init(&fpc1020->lock);
 	rc = devm_request_threaded_irq(dev, gpio_to_irq(fpc1020->irq_gpio),
 			NULL, fpc1020_irq_handler, irqf,
 			dev_name(dev), fpc1020);
@@ -772,19 +701,6 @@ static int fpc1020_probe(struct platform_device *pdev)
 	enable_irq_wake(gpio_to_irq(fpc1020->irq_gpio));
 
 	wake_lock_init(&fpc1020->ttw_wl, WAKE_LOCK_SUSPEND, "fpc_ttw_wl");
-
-#ifdef CONFIG_TOUCHSCREEN_COMMON
-	fpc1020->input_handler.filter = input_filter;
-	fpc1020->input_handler.connect = input_connect;
-	fpc1020->input_handler.disconnect = input_disconnect;
-	fpc1020->input_handler.name = FPC1020_NAME;
-	fpc1020->input_handler.id_table = ids;
-	rc = input_register_handler(&fpc1020->input_handler);
-	if (rc) {
-		dev_err(dev, "failed to register key handler\n");
-		goto exit;
-	}
-#endif
 
 	rc = sysfs_create_group(&dev->kobj, &attribute_group);
 	if (rc) {
@@ -827,15 +743,15 @@ static int fpc1020_remove(struct platform_device *pdev)
 	struct fpc1020_data *fpc1020 = platform_get_drvdata(pdev);
 	fb_unregister_client(&fpc1020->fb_notifier);
 	sysfs_remove_group(&pdev->dev.kobj, &attribute_group);
-	mutex_destroy(&fpc1020->lock);
+	rt_mutex_destroy(&fpc1020->lock);
 	wake_lock_destroy(&fpc1020->ttw_wl);
 	(void)vreg_setup(fpc1020, "vdd_ana", false);
 	(void)vreg_setup(fpc1020, "vdd_io", false);
 	(void)vreg_setup(fpc1020, "vcc_spi", false);
-	remove_proc_entry(PROC_NAME, NULL);
+	remove_proc_entry(PROC_NAME,NULL);
 	dev_info(&pdev->dev, "%s\n", __func__);
 
-	tyt_debug;
+        tyt_debug;
 	return 0;
 }
 
@@ -847,7 +763,7 @@ MODULE_DEVICE_TABLE(of, fpc1020_of_match);
 
 static struct platform_driver fpc1020_driver = {
 	.driver = {
-		.name	= FPC1020_NAME,
+		.name	= "fpc1020",
 		.owner	= THIS_MODULE,
 		.of_match_table = fpc1020_of_match,
 	},
@@ -859,7 +775,7 @@ static int __init fpc1020_init(void)
 {
 	int rc = platform_driver_register(&fpc1020_driver);
 
-	tyt_debug;
+        tyt_debug;
 	if (!rc)
 		pr_info("%s OK\n", __func__);
 	else
