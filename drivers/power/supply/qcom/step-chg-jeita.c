@@ -127,8 +127,7 @@ static struct jeita_fcc_cfg jeita_fcc_config = {
 		{51,		150,		1200000},
 		{151,		430,		2500000},
 		{431,		450,		2000000},
-		{451,		470,		1500000},
-		{471,		600,		 800000},
+		{451,		600,		1500000},
 	},
 };
 #elif defined(CONFIG_KERNEL_CUSTOM_F7A)
@@ -142,8 +141,7 @@ static struct jeita_fcc_cfg jeita_fcc_config = {
 		{51,		150,		1200000},
 		{151,		430,		2500000},
 		{431,		450,		2000000},
-		{451,		470,		1500000},
-		{471,		600,		 800000},
+		{451,		600,		1500000},
 	},
 };
 #elif defined(CONFIG_KERNEL_CUSTOM_E7S)
@@ -155,11 +153,9 @@ static struct jeita_fcc_cfg jeita_fcc_config = {
 		/* TEMP_LOW	TEMP_HIGH	FCC */
 		{0,			50,			 400000},
 		{51,		150,		1200000},
-		{151,		400,		2500000},
-		{401,		430,		2000000},
-		{431,		450,		1500000},
-		{451,		470,		1000000},
-		{471,		600,		 600000},
+		{151,		430,		2500000},
+		{431,		450,		2000000},
+		{451,		600,		1500000},
 	},
 };
 #elif defined(CONFIG_KERNEL_CUSTOM_E7T)
@@ -171,11 +167,9 @@ static struct jeita_fcc_cfg jeita_fcc_config = {
 		/* TEMP_LOW	TEMP_HIGH	FCC */
 		{0,			50,			 400000},
 		{51,		150,		1200000},
-		{151,		400,		2500000},
-		{401,		430,		2000000},
-		{431,		450,		1500000},
-		{451,		470,		1000000},
-		{471,		600,		 600000},
+		{151,		430,		2500000},
+		{431,		450,		2000000},
+		{451,		600,		1500000},
 	},
 };
 #endif
@@ -305,7 +299,7 @@ static int handle_step_chg_config(struct step_chg_info *chip)
 
 	vote(chip->fcc_votable, STEP_CHG_VOTER, true, fcc_ua);
 
-	pr_debug("%s = %d Step-FCC = %duA\n",
+	pr_err("%s = %d Step-FCC = %duA\n",
 		step_chg_config.prop_name, pval.intval, fcc_ua);
 
 update_time:
@@ -333,7 +327,7 @@ static int handle_jeita(struct step_chg_info *chip)
 
 #if defined(CONFIG_KERNEL_CUSTOM_D2S)
 	if (hwc_check_india) {
-		pr_debug("lct video LctIsInVideo=%d, lct_therm_lvl_reserved=%d\n",
+		pr_err("lct video LctIsInVideo=%d, lct_therm_lvl_reserved=%d\n",
 					LctIsInVideo, lct_therm_lvl_reserved.intval);
 	    if (LctIsInVideo== 1)
 			rc = power_supply_set_property(chip->batt_psy,
@@ -414,7 +408,7 @@ static int handle_jeita(struct step_chg_info *chip)
 
 	vote(chip->fv_votable, JEITA_VOTER, true, fv_uv);
 
-	pr_debug("%s = %d FCC = %duA FV = %duV\n",
+	pr_err("%s = %d FCC = %duA FV = %duV\n",
 		jeita_fv_config.prop_name, pval.intval, fcc_ua, fv_uv);
 
 update_time:
