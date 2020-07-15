@@ -1241,6 +1241,8 @@ static inline void hci_encrypt_cfm(struct hci_conn *conn, __u8 status)
 	__u8 encrypt;
 
 	if (conn->state == BT_CONFIG) {
+		if (!status)
+			conn->state = BT_CONNECTED;
 
 		hci_connect_cfm(conn, status);
 		hci_conn_drop(conn);
