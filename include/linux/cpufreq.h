@@ -516,9 +516,6 @@ extern struct cpufreq_governor cpufreq_gov_performance;
 #elif defined(CONFIG_CPU_FREQ_DEFAULT_GOV_POWERSAVE)
 extern struct cpufreq_governor cpufreq_gov_powersave;
 #define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_gov_powersave)
-#elif defined(CONFIG_CPU_FREQ_DEFAULT_GOV_USERSPACE)
-extern struct cpufreq_governor cpufreq_gov_userspace;
-#define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_gov_userspace)
 #elif defined(CONFIG_CPU_FREQ_DEFAULT_GOV_ONDEMAND)
 extern struct cpufreq_governor cpufreq_gov_ondemand;
 #define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_gov_ondemand)
@@ -528,12 +525,56 @@ extern struct cpufreq_governor cpufreq_gov_conservative;
 #elif defined(CONFIG_CPU_FREQ_DEFAULT_GOV_INTERACTIVE)
 extern struct cpufreq_governor cpufreq_gov_interactive;
 #define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_gov_interactive)
-#elif defined(CONFIG_CPU_FREQ_DEFAULT_GOV_SCHED)
-extern struct cpufreq_governor cpufreq_gov_sched;
-#define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_gov_sched)
+#elif defined(CONFIG_CPU_FREQ_DEFAULT_GOV_INTERACTIVEX)
+extern struct cpufreq_governor cpufreq_gov_interactivex;
+#define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_gov_interactivex)
+#elif defined(CONFIG_CPU_FREQ_DEFAULT_GOV_DARKNESS)
+extern struct cpufreq_governor cpufreq_gov_darkness;
+#define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_gov_darkness)
+#elif defined(CONFIG_CPU_FREQ_DEFAULT_GOV_ZZMOOVE)
+extern struct cpufreq_governor cpufreq_gov_zzmoove;
+#define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_gov_zzmoove)
+
+#elif defined(CONFIG_CPU_FREQ_DEFAULT_GOV_WAVE)
+extern struct cpufreq_governor cpufreq_gov_wave;
+#define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_gov_wave)
+
 #elif defined(CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL)
 extern struct cpufreq_governor cpufreq_gov_schedutil;
 #define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_gov_schedutil)
+
+#elif defined(CONFIG_CPU_FREQ_DEFAULT_GOV_BLU_ACTIVE)
+extern struct cpufreq_governor cpufreq_gov_blu_active;
+#define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_gov_blu_active)
+
+#elif defined(CONFIG_CPU_FREQ_DEFAULT_GOV_NEBULA)
+extern struct cpufreq_governor cpufreq_gov_nebula;
+#define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_gov_nebula)
+
+#elif defined(CONFIG_CPU_FREQ_DEFAULT_GOV_BLU_ACTIVE)
+extern struct cpufreq_governor cpufreq_gov_blu_active;
+#define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_gov_blu_active)
+
+#elif defined(CONFIG_CPU_FREQ_DEFAULT_GOV_DARKUTIL)
+extern struct cpufreq_governor cpufreq_gov_darkutil;
+#define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_gov_darkutil)
+
+#elif defined(CONFIG_CPU_FREQ_DEFAULT_GOV_DARKNESSSCHED)
+extern struct cpufreq_governor cpufreq_gov_darknesssched;
+#define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_gov_darknesssched)
+
+#elif defined(CONFIG_CPU_FREQ_DEFAULT_GOV_PWRUTILX)
+extern struct cpufreq_governor cpufreq_gov_pwrutilx;
+#define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_gov_pwrutilx)
+
+#elif defined(CONFIG_CPU_FREQ_DEFAULT_GOV_HELIX_SCHEDUTIL)
+extern struct cpufreq_governor cpufreq_gov_helix_schedutil;
+#define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_gov_helix_schedutil)
+
+#elif defined(CONFIG_CPU_FREQ_DEFAULT_GOV_ENERGY_DCFC)
+extern struct cpufreq_governorcpufreq_energy_dcfc;
+#define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_energy_dcfc)
+
 #endif
 
 static inline void cpufreq_policy_apply_limits(struct cpufreq_policy *policy)

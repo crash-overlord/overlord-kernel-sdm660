@@ -61,24 +61,7 @@ config CPU_FREQ_DEFAULT_GOV_PERFORMANCE
 	  Use the CPUFreq governor 'performance' as default. This sets
 	  the frequency statically to the highest frequency supported by
 	  the CPU.
-
-config CPU_FREQ_DEFAULT_GOV_POWERSAVE
-	bool "powersave"
-	select CPU_FREQ_GOV_POWERSAVE
-	help
-	  Use the CPUFreq governor 'powersave' as default. This sets
-	  the frequency statically to the lowest frequency supported by
-	  the CPU.
-
-config CPU_FREQ_DEFAULT_GOV_USERSPACE
-	bool "userspace"
-	select CPU_FREQ_GOV_USERSPACE
-	help
-	  Use the CPUFreq governor 'userspace' as default. This allows
-	  you to set the CPU frequency manually or when a userspace 
-	  program shall be able to set the CPU dynamically without having
-	  to enable the userspace governor manually.
-
+	  
 config CPU_FREQ_DEFAULT_GOV_ONDEMAND
 	bool "ondemand"
 	select CPU_FREQ_GOV_ONDEMAND
@@ -91,10 +74,18 @@ config CPU_FREQ_DEFAULT_GOV_ONDEMAND
 	  governor. If unsure have a look at the help section of the
 	  driver. Fallback governor will be the performance governor.
 
+config CPU_FREQ_DEFAULT_GOV_POWERSAVE
+	bool "powersave"
+	select CPU_FREQ_GOV_POWERSAVE
+	help
+	  Use the CPUFreq governor 'powersave' as default. This sets
+	  the frequency statically to the lowest frequency supported by
+	  the CPU.
+
+	  
 config CPU_FREQ_DEFAULT_GOV_CONSERVATIVE
 	bool "conservative"
 	select CPU_FREQ_GOV_CONSERVATIVE
-	select CPU_FREQ_GOV_PERFORMANCE
 	help
 	  Use the CPUFreq governor 'conservative' as default. This allows
 	  you to get a full dynamic frequency capable system by simply
@@ -111,53 +102,146 @@ config CPU_FREQ_DEFAULT_GOV_INTERACTIVE
 	  you to get a full dynamic cpu frequency capable system by simply
 	  loading your cpufreq low-level hardware driver, using the
 	  'interactive' governor for latency-sensitive workloads.
-
-config CPU_FREQ_DEFAULT_GOV_SCHEDUTIL
-	bool "schedutil"
-	depends on SMP
-	select CPU_FREQ_GOV_SCHEDUTIL
+	  
+config CPU_FREQ_DEFAULT_GOV_ZZMOOVE
+	bool "zzmoove"
+	select CPU_FREQ_GOV_ZZMOOVE
 	select CPU_FREQ_GOV_PERFORMANCE
 	help
-	  Use the 'schedutil' CPUFreq governor by default. If unsure,
+	  Use the CPUFreq governor 'zzmoove' as default, using predefined
+	  frequency lookup tables and optimized scaling triggers instead of
+	  % frequency steps to get smooth up/downscaling dependant on CPU load.
+
+config CPU_FREQ_DEFAULT_GOV_BLU_SCHEDUTIL
+	bool "blu_schedutil"
+	select CPU_FREQ_GOV_BLU_SCHEDUTIL
+	select CPU_FREQ_GOV_PERFORMANCE
+	help
+	  Use the 'blu_schedutil' CPUFreq governor by default. If unsure,
 	  have a look at the help section of that governor. The fallback
 	  governor will be 'performance'.
+
+	  If in doubt, say N.
+        
+config CPU_FREQ_DEFAULT_GOV_ALUCARDSCHED
+	bool "alucardsched"
+	depends on SMP
+	select CPU_FREQ_GOV_ALUCARDSCHED
+	select CPU_FREQ_GOV_PERFORMANCE
+	help
+	  Use the 'alucardsched' CPUFreq governor by default. If unsure,
+	  have a look at the help section of that governor. The fallback
+	  governor will be 'performance'.
+
 endchoice
 
+config CPU_FREQ_GOV_BLU_ACTIVE
+	tristate "'blu_active' cpufreq policy governor"
+	help
+	  'blu_active' - This driver adds a dynamic cpufreq policy governor
+	  designed for latency-sensitive workloads.
+
+	  This governor attempts to reduce the latency of clock
+	  increases so that the system is more responsive to
+	  interactive workloads.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called cpufreq_blu_active.
+	  
+config CPU_FREQ_GOV_PWRUTILX
+       bool "'pwrutilx' cpufreq policy governor"
+       depends on CPU_FREQ && SMP
+       select CPU_FREQ_GOV_ATTR_SET
+       select IRQ_WORK
+       help
+         This governor makes decisions based on the utilization data provided
+	   by the scheduler.  It sets the CPU frequency to be proportional to
+	     the utilization/capacity ratio coming from the scheduler.  If the
+	       utilization is frequency-invariant, the new frequency is also
+	         proportional to the maximum available frequency.  If that is not the
+		   case, it is proportional to the current frequency of the CPU.
+
+		     If in doubt, say N.
+
+
+config CPU_FREQ_GOV_ALUCARDSCHED
+	bool "'alucardsched' cpufreq policy governor"
+	depends on CPU_FREQ && SMP
+	select CPU_FREQ_GOV_ATTR_SET
+	select IRQ_WORK
+	help
+	  This governor makes decisions based on the utilization data provided
+	  by the scheduler.  It sets the CPU frequency to be proportional to
+	  the utilization/capacity ratio coming from the scheduler.  If the
+	  utilization is frequency-invariant, the new frequency is also
+	  proportional to the maximum available frequency.  If that is not the
+	  case, it is proportional to the current frequency of the CPU.  The
+	  frequency tipping point is at utilization/capacity equal to 80% in
+	  both cases.
+
+ 	  If in doubt, say N.
+	  
+ 	  
+config CPU_FREQ_GOV_BLU_SCHEDUTIL
+	tristate "'blu_schedutil' cpufreq policy governor"
+	depends on CPU_FREQ
+	select CPU_FREQ_GOV_ATTR_SET
+	select IRQ_WORK
+	help
+	  This governor makes decisions based on the utilization data provided
+	  by the scheduler.  It sets the CPU frequency to be proportional to
+	  the utilization/capacity ratio coming from the scheduler.  If the
+	  utilization is frequency-invariant, the new frequency is also
+	  proportional to the maximum available frequency.  If that is not the
+	  case, it is proportional to the current frequency of the CPU.  The
+	  frequency tipping point is at utilization/capacity equal to 80% in
+	  both cases.
+  	  To compile this driver as a module, choose M here: the module will
+	  be called cpufreq_blu_schedutil.
+	  
+	  If in doubt, say N.
+	  
+config CPU_FREQ_GOV_INTERACTIVEX
+	tristate "'interactivex' governor"
+	help
+	  To compile this driver as a module, choose M here: the
+	  module will be called cpufreq_interactivex.
+
+	  If in doubt, say Y.
+	  
+
+config CPU_FREQ_GOV_NEBULA
+	tristate "'nebula' cpufreq policy governor"
+	help
+	  'nebula' - This driver adds a dynamic cpufreq policy governor
+	  designed for latency-sensitive workloads.
+
+	  This governor attempts to reduce the latency of clock
+	  increases so that the system is more responsive to
+	  interactive workloads.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called cpufreq_interactive.
+
+	  For details, take a look at linux/Documentation/cpu-freq.
+
+	  If in doubt, say N.
+
+
+config CPU_FREQ_GOV_ZZMOOVE
+        tristate "'Zzmoove' cpufreq governor"
+        depends on CPU_FREQ
+        help
+                    
+          
+          
 config CPU_FREQ_GOV_PERFORMANCE
 	tristate "'performance' governor"
 	help
 	  This cpufreq governor sets the frequency statically to the
 	  highest available CPU frequency.
-
 	  To compile this driver as a module, choose M here: the
 	  module will be called cpufreq_performance.
-
-	  If in doubt, say Y.
-
-config CPU_FREQ_GOV_POWERSAVE
-	tristate "'powersave' governor"
-	help
-	  This cpufreq governor sets the frequency statically to the
-	  lowest available CPU frequency.
-
-	  To compile this driver as a module, choose M here: the
-	  module will be called cpufreq_powersave.
-
-	  If in doubt, say Y.
-
-config CPU_FREQ_GOV_USERSPACE
-	tristate "'userspace' governor for userspace frequency scaling"
-	help
-	  Enable this cpufreq governor when you either want to set the
-	  CPU frequency manually or when a userspace program shall
-	  be able to set the CPU dynamically, like on LART 
-	  <http://www.lartmaker.nl/>.
-
-	  To compile this driver as a module, choose M here: the
-	  module will be called cpufreq_userspace.
-
-	  For details, take a look at <file:Documentation/cpu-freq/>.
-
 	  If in doubt, say Y.
 
 config CPU_FREQ_GOV_ONDEMAND
@@ -177,6 +261,18 @@ config CPU_FREQ_GOV_ONDEMAND
 	  For details, take a look at linux/Documentation/cpu-freq.
 
 	  If in doubt, say N.
+	  
+	
+config CPU_FREQ_GOV_POWERSAVE
+	tristate "'powersave' governor"
+	help
+	  This cpufreq governor sets the frequency statically to the
+	  lowest available CPU frequency.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called cpufreq_powersave.
+
+	  If in doubt, say Y.
 
 config CPU_FREQ_GOV_INTERACTIVE
 	bool "'interactive' cpufreq policy governor"
@@ -216,6 +312,7 @@ config CPU_FREQ_GOV_CONSERVATIVE
 
 	  If in doubt, say N.
 
+
 config CPU_BOOST
 	tristate "Event base short term CPU freq boost"
 	depends on CPU_FREQ
@@ -227,25 +324,16 @@ config CPU_BOOST
 
 	  If in doubt, say N.
 
-config CPU_FREQ_GOV_SCHEDUTIL
-	bool "'schedutil' cpufreq policy governor"
-	depends on CPU_FREQ && SMP
-	select CPU_FREQ_GOV_ATTR_SET
-	select IRQ_WORK
+config DSBOOST
+	tristate "Dynamic SchedTune Boosting on events"
+	depends on DYNAMIC_STUNE_BOOST
 	help
-	  This governor makes decisions based on the utilization data provided
-	  by the scheduler.  It sets the CPU frequency to be proportional to
-	  the utilization/capacity ratio coming from the scheduler.  If the
-	  utilization is frequency-invariant, the new frequency is also
-	  proportional to the maximum available frequency.  If that is not the
-	  case, it is proportional to the current frequency of the CPU.  The
-	  frequency tipping point is at utilization/capacity equal to 80% in
-	  both cases.
+	  This driver attempts to improve responsiveness on mobile devices
+	  with Dynamic SchedTune Boosting support. Boosts are applied on
+	  user input, after user input unboosts, and on a sched_boost trigger.
 
 	  If in doubt, say N.
-
-comment "CPU frequency scaling drivers"
-
+	  
 config CPUFREQ_DT
 	tristate "Generic DT based cpufreq driver"
 	depends on HAVE_CLK && OF
@@ -258,6 +346,8 @@ config CPUFREQ_DT
 	  systems which share clock and voltage across all CPUs.
 
 	  If in doubt, say N.
+
+
 
 if X86
 source "drivers/cpufreq/Kconfig.x86"

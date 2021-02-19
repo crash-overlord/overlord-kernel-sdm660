@@ -36,10 +36,12 @@
 		qcom,panel-supply-entry@0 {
 			reg = <0>;
 			qcom,supply-name = "wqhd-vddio";
-			qcom,supply-min-voltage = <1800000>;
-			qcom,supply-max-voltage = <1800000>;
+			qcom,supply-min-voltage = <1799500>;
+			qcom,supply-max-voltage = <1799500>;
 			qcom,supply-enable-load = <32000>;
 			qcom,supply-disable-load = <80>;
+			qcom,supply-post-on-sleep = <2>;
+			qcom,supply-pre-off-sleep = <10>;
 		};
 
 		qcom,panel-supply-entry@1 {
@@ -49,6 +51,7 @@
 			qcom,supply-max-voltage = <6000000>;
 			qcom,supply-enable-load = <100000>;
 			qcom,supply-disable-load = <100>;
+			qcom,supply-pre-on-sleep = <8>;
 		};
 
 		qcom,panel-supply-entry@2 {
@@ -134,7 +137,8 @@
 		23 1e 07 08 05 03 04 a0
 		23 1e 07 08 05 03 04 a0
 		23 18 07 08 04 03 04 a0];
-	qcom,esd-check-enabled;
+	qcom,ulps-enabled;
+	qcom,suspend-ulps-enabled;
 	qcom,mdss-dsi-panel-status-check-mode = "reg_read";
 	qcom,mdss-dsi-panel-status-command = [06 01 00 01 00 00 01 0a];
 	qcom,mdss-dsi-panel-status-command-state = "dsi_hs_mode";
