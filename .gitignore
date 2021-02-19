@@ -125,3 +125,7 @@ out
 linaro32
 linaro64
 clang
+
+# build
+build.sh
+kernel.log
