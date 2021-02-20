@@ -1,4 +1,5 @@
 /* Copyright (c) 2017 The Linux Foundation. All rights reserved.
+ * Copyright (C) 2019 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -122,10 +123,12 @@ static struct jeita_fcc_cfg jeita_fcc_config = {
 	.hysteresis	= 0, /* 1degC hysteresis */
 	.fcc_cfg	= {
 		/* TEMP_LOW	TEMP_HIGH	FCC */
-		{0,		50,		300000},
-		{51,		150,		900000},
-		{151,	450,		2900000},
-		{451,	600,		1500000},
+		{0,			50,			 400000},
+		{51,		150,		1200000},
+		{151,		430,		2500000},
+		{431,		450,		2000000},
+		{451,		470,		1500000},
+		{471,		600,		 800000},
 	},
 };
 #elif defined(CONFIG_KERNEL_CUSTOM_F7A)
@@ -135,10 +138,12 @@ static struct jeita_fcc_cfg jeita_fcc_config = {
 	.hysteresis	= 0, /* 1degC hysteresis */
 	.fcc_cfg	= {
 		/* TEMP_LOW	TEMP_HIGH	FCC */
-		{0,		50,		400000},
+		{0,			50,			 400000},
 		{51,		150,		1200000},
-		{151,	450,		2900000},
-		{451,	600,		2000000},
+		{151,		430,		2500000},
+		{431,		450,		2000000},
+		{451,		470,		1500000},
+		{471,		600,		 800000},
 	},
 };
 #elif defined(CONFIG_KERNEL_CUSTOM_E7S)
@@ -148,10 +153,13 @@ static struct jeita_fcc_cfg jeita_fcc_config = {
 	.hysteresis	= 0, /* 1degC hysteresis */
 	.fcc_cfg	= {
 		/* TEMP_LOW	TEMP_HIGH	FCC */
-		{0,		50,		400000},
+		{0,			50,			 400000},
 		{51,		150,		1200000},
-		{151,		450,		2500000},
-		{451,		600,		1200000},
+		{151,		400,		2500000},
+		{401,		430,		2000000},
+		{431,		450,		1500000},
+		{451,		470,		1000000},
+		{471,		600,		 600000},
 	},
 };
 #elif defined(CONFIG_KERNEL_CUSTOM_E7T)
@@ -161,10 +169,13 @@ static struct jeita_fcc_cfg jeita_fcc_config = {
 	.hysteresis	= 0, /* 1degC hysteresis */
 	.fcc_cfg	= {
 		/* TEMP_LOW	TEMP_HIGH	FCC */
-		{0,		50,		400000},
+		{0,			50,			 400000},
 		{51,		150,		1200000},
-		{151,		450,		2500000},
-		{451,		600,		2000000},
+		{151,		400,		2500000},
+		{401,		430,		2000000},
+		{431,		450,		1500000},
+		{451,		470,		1000000},
+		{471,		600,		 600000},
 	},
 };
 #endif
@@ -204,6 +215,7 @@ static int get_val(struct range_data *range, int hysteresis, int current_index,
 			range[i].high_threshold, threshold)) {
 			*new_index = i;
 			*val = range[i].value;
+			break;
 		}
 
 	/* if nothing was found, return -ENODATA */
@@ -305,12 +317,32 @@ reschedule:
 	return (STEP_CHG_HYSTERISIS_DELAY_US - elapsed_us + 1000);
 }
 
+#if defined(CONFIG_KERNEL_CUSTOM_D2S)
+extern union power_supply_propval lct_therm_lvl_reserved;
+extern int LctIsInVideo;
+extern int hwc_check_india;
+union power_supply_propval lct_therm_video_level = {6,};
+#endif
+
 static int handle_jeita(struct step_chg_info *chip)
 {
 	union power_supply_propval pval = {0, };
 	int rc = 0, fcc_ua = 0, fv_uv = 0;
 	u64 elapsed_us;
+	int temp = 1;
 
+#if defined(CONFIG_KERNEL_CUSTOM_D2S)
+	if (hwc_check_india) {
+		pr_debug("lct video LctIsInVideo=%d, lct_therm_lvl_reserved=%d\n",
+					LctIsInVideo, lct_therm_lvl_reserved.intval);
+	    if (LctIsInVideo== 1)
+			rc = power_supply_set_property(chip->batt_psy,
+			POWER_SUPPLY_PROP_SYSTEM_TEMP_LEVEL, &lct_therm_video_level);
+		else
+			rc = power_supply_set_property(chip->batt_psy,
+			POWER_SUPPLY_PROP_SYSTEM_TEMP_LEVEL, &lct_therm_lvl_reserved);
+	}
+#endif
 	rc = power_supply_get_property(chip->batt_psy,
 		POWER_SUPPLY_PROP_SW_JEITA_ENABLED, &pval);
 	if (rc < 0)
@@ -336,6 +368,8 @@ static int handle_jeita(struct step_chg_info *chip)
 		pr_err("Couldn't read %s property rc=%d\n",
 				step_chg_config.prop_name, rc);
 		return rc;
+	}else{
+		temp = pval.intval;
 	}
 
 	rc = get_val(jeita_fcc_config.fcc_cfg, jeita_fcc_config.hysteresis,
@@ -357,7 +391,11 @@ static int handle_jeita(struct step_chg_info *chip)
 		return -EINVAL;
 
 	vote(chip->fcc_votable, JEITA_VOTER, true, fcc_ua);
-
+#if defined(CONFIG_KERNEL_CUSTOM_E7T)
+	if((temp < 0) || (temp >600)){
+		vote(chip->fcc_votable, JEITA_VOTER, true, 0);
+	}
+#endif
 	rc = get_val(jeita_fv_config.fv_cfg, jeita_fv_config.hysteresis,
 			chip->jeita_fv_index,
 			pval.intval,
@@ -377,7 +415,7 @@ static int handle_jeita(struct step_chg_info *chip)
 	vote(chip->fv_votable, JEITA_VOTER, true, fv_uv);
 
 	pr_debug("%s = %d FCC = %duA FV = %duV\n",
-		step_chg_config.prop_name, pval.intval, fcc_ua, fv_uv);
+		jeita_fv_config.prop_name, pval.intval, fcc_ua, fv_uv);
 
 update_time:
 	chip->jeita_last_update_time = ktime_get();
