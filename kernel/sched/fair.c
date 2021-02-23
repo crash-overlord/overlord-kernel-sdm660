@@ -4731,12 +4731,7 @@ dequeue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 	 *   - For group entity, update its weight to reflect the new share
 	 *     of its group cfs_rq.
 	 */
-	update_flags = UPDATE_TG;
-
-	if (flags & DEQUEUE_IDLE)
-		update_flags |= SKIP_CPUFREQ;
-
-	update_load_avg(se, update_flags);
+	update_load_avg(se, UPDATE_TG);
 	dequeue_entity_load_avg(cfs_rq, se);
 
 	update_stats_dequeue(cfs_rq, se);
@@ -6013,9 +6008,6 @@ static void dequeue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 	struct sched_entity *se = &p->se;
 	int task_sleep = flags & DEQUEUE_SLEEP;
 
-	if (task_sleep && rq->nr_running == 1)
-		flags |= DEQUEUE_IDLE;
-
 	for_each_sched_entity(se) {
 		cfs_rq = cfs_rq_of(se);
 		dequeue_entity(cfs_rq, se, flags);
@@ -6054,7 +6046,7 @@ static void dequeue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 		if (cfs_rq_throttled(cfs_rq))
 			break;
 
-		update_load_avg(se, UPDATE_TG | (flags & DEQUEUE_IDLE));
+		update_load_avg(se, UPDATE_TG);
 		update_cfs_shares(se);
 	}
 
@@ -7836,21 +7828,6 @@ static inline int find_best_target(struct task_struct *p, int *backup_cpu,
 	 *   a) ACTIVE CPU: target_cpu
 	 *   b) IDLE CPU: best_idle_cpu
 	 */
-	if (target_cpu != -1 && !idle_cpu(target_cpu) &&
-			best_idle_cpu != -1) {
-		curr_tsk = READ_ONCE(cpu_rq(target_cpu)->curr);
-		if (curr_tsk && schedtune_task_boost_rcu_locked(curr_tsk))
-			target_cpu = best_idle_cpu;
-	}
-
-	if (prefer_idle && (best_idle_cpu != -1)) {
-		trace_sched_find_best_target(p, prefer_idle, min_util, cpu,
-					     best_idle_cpu, best_active_cpu,
-					     best_idle_cpu);
-
-		return best_idle_cpu;
-	}
-
 	if (target_cpu == -1)
 		target_cpu = prefer_idle
 			? best_active_cpu
@@ -9358,6 +9335,7 @@ static void update_cpu_capacity(struct sched_domain *sd, int cpu)
 	}
 	raw_spin_unlock_irqrestore(&mcc->lock, flags);
 
+skip_unlock: __attribute__ ((unused));
 	capacity *= scale_rt_capacity(cpu);
 	capacity >>= SCHED_CAPACITY_SHIFT;
 

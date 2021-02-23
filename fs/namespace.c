@@ -1292,7 +1292,7 @@ void replace_mount_options(struct super_block *sb, char *options)
 	char *old = sb->s_options;
 	rcu_assign_pointer(sb->s_options, options);
 	if (old) {
-		synchronize_rcu();
+	synchronize_rcu_expedited();
 		kfree(old);
 	}
 }
@@ -2829,7 +2829,11 @@ long do_mount(const char *dev_name, const char __user *dir_name,
 	/* Default to relatime unless overriden */
 	if (!(flags & MS_NOATIME))
 		mnt_flags |= MNT_RELATIME;
-
+	
+    /* Default to noatime/nodiratime unless overriden */
+	if (!(flags & MS_RELATIME))
+		mnt_flags |= MNT_NOATIME;
+    
 	/* Separate the per-mountpoint flags */
 	if (flags & MS_NOSUID)
 		mnt_flags |= MNT_NOSUID;
@@ -2837,9 +2841,9 @@ long do_mount(const char *dev_name, const char __user *dir_name,
 		mnt_flags |= MNT_NODEV;
 	if (flags & MS_NOEXEC)
 		mnt_flags |= MNT_NOEXEC;
-	if (flags & MS_NOATIME)
+//	if (flags & MS_NOATIME)
 		mnt_flags |= MNT_NOATIME;
-	if (flags & MS_NODIRATIME)
+//	if (flags & MS_NODIRATIME)
 		mnt_flags |= MNT_NODIRATIME;
 	if (flags & MS_STRICTATIME)
 		mnt_flags &= ~(MNT_RELATIME | MNT_NOATIME);
