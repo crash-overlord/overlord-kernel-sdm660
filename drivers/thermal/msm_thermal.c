@@ -187,7 +187,7 @@ static bool ocr_enabled;
 static bool ocr_nodes_called;
 static bool ocr_probed;
 static bool ocr_reg_init_defer;
-static bool hotplug_enabled;
+static bool hotplug_enabled = 0;
 static bool interrupt_mode_enable;
 static bool msm_thermal_probed;
 static bool gfx_crit_phase_ctrl_enabled;
@@ -3029,7 +3029,6 @@ static void retry_hotplug(struct work_struct *work)
 	mutex_unlock(&core_control_mutex);
 }
 
-#ifdef CONFIG_SMP
 static void __ref do_core_control(int temp)
 {
 	int i = 0;
@@ -3259,22 +3258,7 @@ static __ref int do_hotplug(void *data)
 
 	return ret;
 }
-#else
-static void __ref do_core_control(int temp)
-{
-	return;
-}
 
-static __ref int do_hotplug(void *data)
-{
-	return 0;
-}
-
-static int __ref update_offline_cores(int val)
-{
-	return 0;
-}
-#endif
 
 static int do_gfx_phase_cond(void)
 {
