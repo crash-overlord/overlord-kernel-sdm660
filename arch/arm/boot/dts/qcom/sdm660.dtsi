@@ -315,10 +315,6 @@
 	firmware: firmware {
 		android {
 			compatible = "android,firmware";
-			vbmeta {
-				compatible = "android,vbmeta";
-				parts = "vbmeta,boot,system,vendor,dtbo,recovery";
-			};
 			fstab {
 				compatible = "android,fstab";
 				vendor {
@@ -326,7 +322,7 @@
 					dev = "/dev/block/platform/soc/c0c4000.sdhci/by-name/vendor";
 					type = "ext4";
 					mnt_flags = "ro,barrier=1,discard";
-					fsmgr_flags = "wait,slotselect,verify";
+					fsmgr_flags = "wait";
 					status = "ok";
 				};
 			};
@@ -812,6 +808,10 @@
 			qcom,sensor-type = "llm";
 			qcom,sensor-name = "limits_sensor-01";
 		};
+		sensor_information22: qcom,sensor-information-22 {
+			qcom,sensor-type = "adc";
+			qcom,sensor-name = "backlight_therm";
+		};
 	};
 
 	mitigation_profile0: qcom,limit_info-0 {
@@ -1250,7 +1250,7 @@
 		qcom,core-dev-table =
 			< 902400 762 >,
 			< 1401600 2086 >,
-			< 1843200 3879 >;
+			< 1881600 3879 >;
 	};
 
 	devfreq_memlat_4: qcom,arm-memlat-mon-4 {
@@ -1270,7 +1270,7 @@
 			cpu-to-dev-map-0 =
 				< 633600 762 >,
 				< 1401600 1571 >,
-				< 1843200 2929 >;
+				< 1881600 2929 >;
 			cpu-to-dev-map-4 =
 				< 1113600 762 >,
 				< 1401600 2086 >,
@@ -1305,7 +1305,7 @@
 			<  1401600000 0x04040049 0x073a003a 0x2 6 >,
 			<  1536000000 0x04040050 0x08400040 0x2 7 >,
 			<  1747200000 0x0404005b 0x09480048 0x2 8 >,
-			<  1881600000 0x04040062 0x094e004e 0x3 9 >;
+			<  1881600000 0x04040060 0x094c004c 0x3 9 >;
 
 
 		qcom,pwrcl-speedbin1-v0 =
@@ -1317,29 +1317,26 @@
 			<  1401600000 0x04040049 0x073a003a 0x2 6 >,
 			<  1536000000 0x04040050 0x08400040 0x2 7 >,
 			<  1747200000 0x0404005b 0x09480048 0x2 8 >,
-			<  1881600000 0x04040062 0x094e004e 0x3 9 >;
+			<  1881600000 0x04040060 0x094c004c 0x3 9 >;
 
 		qcom,pwrcl-speedbin3-v0 =
 			<   300000000 0x0004000f 0x01200020 0x1 1 >,
-			<   499200000 0x0504001a 0x0220001f 0x1 2 >,
-			<   633600000 0x05040021 0x03200020 0x1 3 >,
-			<   902400000 0x0404002f 0x04260026 0x1 4 >,
-			<  1113600000 0x0404003a 0x052e002e 0x2 5 >,
-			<  1401600000 0x04040049 0x073a003a 0x2 6 >,
-			<  1536000000 0x04040050 0x08400040 0x2 7 >,
-			<  1747200000 0x0404005b 0x09480048 0x2 8 >,
-			<  1881600000 0x04040062 0x094e004e 0x3 9 >;
+			<   633600000 0x05040021 0x03200020 0x1 2 >,
+			<   902400000 0x0404002f 0x04260026 0x1 3 >,
+			<  1113600000 0x0404003a 0x052e002e 0x2 4 >,
+			<  1401600000 0x04040049 0x073a003a 0x2 5 >,
+			<  1536000000 0x04040050 0x08400040 0x2 6 >,
+			<  1612800000 0x04040054 0x09430043 0x2 7 >;
 
 		qcom,pwrcl-speedbin4-v0 =
 			<   300000000 0x0004000f 0x01200020 0x1 1 >,
-			<   499200000 0x0504001a 0x0220001f 0x1 2 >,
-			<   633600000 0x05040021 0x03200020 0x1 3 >,
-			<   902400000 0x0404002f 0x04260026 0x1 4 >,
-			<  1113600000 0x0404003a 0x052e002e 0x2 5 >,
-			<  1401600000 0x04040049 0x073a003a 0x2 6 >,
-			<  1536000000 0x04040050 0x08400040 0x2 7 >,
-			<  1747200000 0x0404005b 0x09480048 0x2 8 >,
-			<  1881600000 0x04040062 0x094e004e 0x3 9 >;
+			<   633600000 0x05040021 0x03200020 0x1 2 >,
+			<   902400000 0x0404002f 0x04260026 0x1 3 >,
+			<  1113600000 0x0404003a 0x052e002e 0x2 4 >,
+			<  1401600000 0x04040049 0x073a003a 0x2 5 >,
+			<  1536000000 0x04040050 0x08400040 0x2 6 >,
+			<  1747200000 0x0404005b 0x09480048 0x2 7 >,
+			<  1881600000 0x04040060 0x094c004c 0x3 8 >;
 
 		qcom,perfcl-speedbin0-v0 =
 			<   300000000 0x0004000f 0x01200020 0x1 1 >,
@@ -1364,18 +1361,14 @@
 			<  1113600000 0x0404003a 0x052e002e 0x1 2 >,
 			<  1401600000 0x04040049 0x073a003a 0x2 3 >,
 			<  1747200000 0x0404005b 0x09480048 0x2 4 >,
-			<  1958400000 0x04040066 0x0a510051 0x2 5 >,
-			<  2150400000 0x04040070 0x0b590059 0x2 6 >,
-			<  2457600000 0x04040080 0x0c660066 0x3 7 >;
+			<  1804800000 0x0404005e 0x094b004b 0x2 5 >;
 
 		qcom,perfcl-speedbin4-v0 =
 			<   300000000 0x0004000f 0x01200020 0x1 1 >,
 			<  1113600000 0x0404003a 0x052e002e 0x1 2 >,
 			<  1401600000 0x04040049 0x073a003a 0x2 3 >,
 			<  1747200000 0x0404005b 0x09480048 0x2 4 >,
-			<  1958400000 0x04040066 0x0a510051 0x2 5 >,
-			<  2150400000 0x04040070 0x0b590059 0x2 6 >,
-			<  2457600000 0x04040080 0x0c660066 0x3 7 >;
+			<  1958400000 0x04040066 0x0a510051 0x2 5 >;
 
 		qcom,up-timer = <1000 1000>;
 		qcom,down-timer = <1000 1000>;
@@ -2267,7 +2260,7 @@
 			<&clock_rpmcc QSEECOM_CE1_CLK>,
 			<&clock_rpmcc QSEECOM_CE1_CLK>;
 		qcom,ce-opp-freq = <171430000>;
-		qcom,qsee-reentrancy-support = <2>;
+		qcom,qsee-reentrancy-support = <0>;
 	};
 
 	qcom_cedev: qcedev@1de0000{
@@ -2445,10 +2438,6 @@
 		"HS_RA_G1_L1", "HS_RA_G2_L1", "HS_RA_G3_L1",
 		"HS_RB_G1_L1", "HS_RB_G2_L1", "HS_RB_G3_L1",
 		"MAX";
-
-		pinctrl-names = "dev-reset-assert", "dev-reset-deassert";
-		pinctrl-0 = <&ufs_dev_reset_assert>;
-		pinctrl-1 = <&ufs_dev_reset_deassert>;
 
 		resets = <&clock_gcc GCC_UFS_BCR>;
 		reset-names = "core_reset";
