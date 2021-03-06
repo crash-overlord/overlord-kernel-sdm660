@@ -322,7 +322,7 @@
 					dev = "/dev/block/platform/soc/c0c4000.sdhci/by-name/vendor";
 					type = "ext4";
 					mnt_flags = "ro,barrier=1,discard";
-					fsmgr_flags = "wait";
+					fsmgr_flags = "wait,slotselect,verify";
 					status = "ok";
 				};
 			};
@@ -807,10 +807,6 @@
 		sensor_information21: qcom,sensor-information-21 {
 			qcom,sensor-type = "llm";
 			qcom,sensor-name = "limits_sensor-01";
-		};
-		sensor_information22: qcom,sensor-information-22 {
-			qcom,sensor-type = "adc";
-			qcom,sensor-name = "backlight_therm";
 		};
 	};
 
@@ -1298,26 +1294,23 @@
 
 		qcom,pwrcl-speedbin0-v0 =
 			<   300000000 0x0004000f 0x01200020 0x1 1 >,
-			<   499200000 0x0504001a 0x0220001f 0x1 2 >,
-			<   633600000 0x05040021 0x03200020 0x1 3 >,
-			<   902400000 0x0404002f 0x04260026 0x1 4 >,
-			<  1113600000 0x0404003a 0x052e002e 0x2 5 >,
-			<  1401600000 0x04040049 0x073a003a 0x2 6 >,
-			<  1536000000 0x04040050 0x08400040 0x2 7 >,
-			<  1747200000 0x0404005b 0x09480048 0x2 8 >,
-			<  1881600000 0x04040060 0x094c004c 0x3 9 >;
-
+			<   633600000 0x05040021 0x03200020 0x1 2 >,
+			<   902400000 0x0404002f 0x04260026 0x1 3 >,
+			<  1113600000 0x0404003a 0x052e002e 0x2 4 >,
+			<  1401600000 0x04040049 0x073a003a 0x2 5 >,
+			<  1536000000 0x04040050 0x08400040 0x2 6 >,
+			<  1747200000 0x0404005b 0x09480048 0x2 7 >,
+			<  1881600000 0x04040060 0x094c004c 0x3 8 >;
 
 		qcom,pwrcl-speedbin1-v0 =
 			<   300000000 0x0004000f 0x01200020 0x1 1 >,
-			<   499200000 0x0504001a 0x0220001f 0x1 2 >,
-			<   633600000 0x05040021 0x03200020 0x1 3 >,
-			<   902400000 0x0404002f 0x04260026 0x1 4 >,
-			<  1113600000 0x0404003a 0x052e002e 0x2 5 >,
-			<  1401600000 0x04040049 0x073a003a 0x2 6 >,
-			<  1536000000 0x04040050 0x08400040 0x2 7 >,
-			<  1747200000 0x0404005b 0x09480048 0x2 8 >,
-			<  1881600000 0x04040060 0x094c004c 0x3 9 >;
+			<   633600000 0x05040021 0x03200020 0x1 2 >,
+			<   902400000 0x0404002f 0x04260026 0x1 3 >,
+			<  1113600000 0x0404003a 0x052e002e 0x2 4 >,
+			<  1401600000 0x04040049 0x073a003a 0x2 5 >,
+			<  1536000000 0x04040050 0x08400040 0x2 6 >,
+			<  1747200000 0x0404005b 0x09480048 0x2 7 >,
+			<  1881600000 0x04040060 0x094c004c 0x3 8 >;
 
 		qcom,pwrcl-speedbin3-v0 =
 			<   300000000 0x0004000f 0x01200020 0x1 1 >,
@@ -1336,7 +1329,7 @@
 			<  1401600000 0x04040049 0x073a003a 0x2 5 >,
 			<  1536000000 0x04040050 0x08400040 0x2 6 >,
 			<  1747200000 0x0404005b 0x09480048 0x2 7 >,
-			<  1881600000 0x04040060 0x094c004c 0x3 8 >;
+			<  1881600000 0x04040060 0x094c004c 0x3 >;
 
 		qcom,perfcl-speedbin0-v0 =
 			<   300000000 0x0004000f 0x01200020 0x1 1 >,
@@ -1418,7 +1411,6 @@
 
 		qcom,cpufreq-table-0 =
             <300000>,
-            <499200>,
 			<633600>,
 			<902400>,
 			<1113600>,
@@ -1608,6 +1600,7 @@
 		reg = <0x0 0x200000>;
 		reg-names = "rmtfs";
 		qcom,client-id = <0x00000001>;
+		qcom,guard-memory;
 	};
 
 	qcom,rmnet-ipa {
@@ -2134,6 +2127,7 @@
 		qcom,qdsp6v62-1-5;
 		memory-region = <&modem_fw_mem>;
 		qcom,mem-protect-id = <0xF>;
+		qcom,complete-ramdump;
 		qcom,cx-ipeak-vote;
 
 		/* GPIO inputs from mss */
@@ -2260,7 +2254,7 @@
 			<&clock_rpmcc QSEECOM_CE1_CLK>,
 			<&clock_rpmcc QSEECOM_CE1_CLK>;
 		qcom,ce-opp-freq = <171430000>;
-		qcom,qsee-reentrancy-support = <0>;
+		qcom,qsee-reentrancy-support = <2>;
 	};
 
 	qcom_cedev: qcedev@1de0000{
@@ -2438,6 +2432,10 @@
 		"HS_RA_G1_L1", "HS_RA_G2_L1", "HS_RA_G3_L1",
 		"HS_RB_G1_L1", "HS_RB_G2_L1", "HS_RB_G3_L1",
 		"MAX";
+
+		pinctrl-names = "dev-reset-assert", "dev-reset-deassert";
+		pinctrl-0 = <&ufs_dev_reset_assert>;
+		pinctrl-1 = <&ufs_dev_reset_deassert>;
 
 		resets = <&clock_gcc GCC_UFS_BCR>;
 		reset-names = "core_reset";
