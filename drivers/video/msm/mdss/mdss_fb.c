@@ -1,8 +1,8 @@
 /*
  * Core MDSS framebuffer driver.
  *
- * Copyright (c) 2008-2020, The Linux Foundation. All rights reserved.
  * Copyright (C) 2007 Google Incorporated
+ * Copyright (c) 2008-2019, The Linux Foundation. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -43,25 +43,19 @@
 #include <linux/uaccess.h>
 #include <linux/version.h>
 #include <linux/vmalloc.h>
+#include <linux/sync.h>
+#include <linux/sw_sync.h>
 #include <linux/file.h>
 #include <linux/kthread.h>
 #include <linux/dma-buf.h>
-#include <linux/mdss_io_util.h>
-#include <linux/wakelock.h>
 #include <linux/devfreq_boost.h>
-#include <sync.h>
-#include <sw_sync.h>
-
-#include "mdss_dsi.h"
 #include "mdss_fb.h"
 #include "mdss_mdp_splash_logo.h"
 #define CREATE_TRACE_POINTS
 #include "mdss_debug.h"
 #include "mdss_smmu.h"
 #include "mdss_mdp.h"
-#include "dsi_access.h"
-
-#include "mdss_livedisplay.h"
+#include "mdp3_ctrl.h"
 
 #ifdef CONFIG_FB_MSM_TRIPLE_BUFFER
 #define MDSS_FB_NUM 3
@@ -88,15 +82,6 @@
  * Default value is set to 1 sec.
  */
 #define MDP_TIME_PERIOD_CALC_FPS_US	1000000
-
-#define MDSS_BRIGHT_TO_BL_DIM(out, v) do {\
-			out = (12*v*v+1393*v+3060)/4465;\
-			} while (0)
-bool backlight_dimmer = false;
-module_param(backlight_dimmer, bool, 0644);
-
-int backlight_min = 0;
-module_param(backlight_min, int, 0644);
 
 static struct fb_info *fbi_list[MAX_FBI_LIST];
 static int fbi_list_index;
@@ -138,50 +123,6 @@ static int mdss_fb_send_panel_event(struct msm_fb_data_type *mfd,
 					int event, void *arg);
 static void mdss_fb_set_mdp_sync_pt_threshold(struct msm_fb_data_type *mfd,
 		int type);
-
-int ce_state, cabc_state, srgb_state, gamma_state;
-bool ce_resume, cabc_resume, srgb_resume, gamma_resume;
-bool first_set_bl = false;
-int first_ce_state, first_cabc_state, first_srgb_state, first_gamma_state;
-
-static inline void __user *to_user_ptr(uint64_t address)
-{
-	return (void __user *)(uintptr_t)address;
-}
-
-static inline uint64_t __user to_user_u64(void *ptr)
-{
-	return (uint64_t)((uintptr_t)ptr);
-}
-#define WAIT_RESUME_TIMEOUT 200
-static struct fb_info *prim_fbi;
-static struct delayed_work prim_panel_work;
-static atomic_t prim_panel_is_on;
-static struct wake_lock prim_panel_wakelock;
-static void prim_panel_off_delayed_work(struct work_struct *work)
-{
-#ifdef CONFIG_FRAMEBUFFER_CONSOLE
-	console_lock();
-#endif
-	if (!lock_fb_info(prim_fbi)) {
-#ifdef CONFIG_FRAMEBUFFER_CONSOLE
-		console_unlock();
-#endif
-		return;
-	}
-
-	if (atomic_read(&prim_panel_is_on)) {
-		fb_blank(prim_fbi, FB_BLANK_POWERDOWN);
-		atomic_set(&prim_panel_is_on, false);
-		wake_unlock(&prim_panel_wakelock);
-	}
-
-	unlock_fb_info(prim_fbi);
-#ifdef CONFIG_FRAMEBUFFER_CONSOLE
-	console_unlock();
-#endif
-}
-
 void mdss_fb_no_update_notify_timer_cb(unsigned long data)
 {
 	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)data;
@@ -196,7 +137,12 @@ void mdss_fb_no_update_notify_timer_cb(unsigned long data)
 void mdss_fb_bl_update_notify(struct msm_fb_data_type *mfd,
 		uint32_t notification_type)
 {
+#ifndef TARGET_HW_MDSS_MDP3
 	struct mdss_overlay_private *mdp5_data = NULL;
+#endif
+#ifdef TARGET_HW_MDSS_MDP3
+	struct mdp3_session_data *mdp3_session = NULL;
+#endif
 	if (!mfd) {
 		pr_err("%s mfd NULL\n", __func__);
 		return;
@@ -222,6 +168,7 @@ void mdss_fb_bl_update_notify(struct msm_fb_data_type *mfd,
 		mutex_lock(&mfd->no_update.lock);
 	}
 	mutex_unlock(&mfd->no_update.lock);
+#ifndef TARGET_HW_MDSS_MDP3
 	mdp5_data = mfd_to_mdp5_data(mfd);
 	if (mdp5_data) {
 		if (notification_type == NOTIFY_TYPE_BL_AD_ATTEN_UPDATE) {
@@ -232,6 +179,15 @@ void mdss_fb_bl_update_notify(struct msm_fb_data_type *mfd,
 			sysfs_notify_dirent(mdp5_data->bl_event_sd);
 		}
 	}
+#endif
+#ifdef TARGET_HW_MDSS_MDP3
+	mdp3_session = (struct mdp3_session_data *)mfd->mdp.private1;
+	if (mdp3_session) {
+		mdp3_session->bl_events++;
+		sysfs_notify_dirent(mdp3_session->bl_event_sd);
+		pr_debug("bl_event = %u\n", mdp3_session->bl_events);
+	}
+#endif
 }
 
 static int mdss_fb_notify_update(struct msm_fb_data_type *mfd,
@@ -288,11 +244,9 @@ static int mdss_fb_notify_update(struct msm_fb_data_type *mfd,
 		}
 	} else if (notify == NOTIFY_UPDATE_STOP) {
 		mutex_lock(&mfd->update.lock);
-		if (mfd->update.init_done) {
-			mutex_unlock(&mfd->update.lock);
-			mutex_lock(&mfd->no_update.lock);
+		if (mfd->update.init_done)
 			reinit_completion(&mfd->no_update.comp);
-		} else {
+		else {
 			mutex_unlock(&mfd->update.lock);
 			pr_err("notify update stop called without init\n");
 			return -EINVAL;
@@ -336,18 +290,10 @@ static void mdss_fb_set_bl_brightness(struct led_classdev *led_cdev,
 	if (value > mfd->panel_info->brightness_max)
 		value = mfd->panel_info->brightness_max;
 
-	// Boeffla: apply min limits for LCD backlight (0 is exception for display off)
-	if (value != 0 && value < backlight_min)
-		value = backlight_min;
-
-	if (backlight_dimmer) {
-		MDSS_BRIGHT_TO_BL_DIM(bl_lvl, value);
-	} else {
-		/* This maps android backlight level 0 to 255 into
-		   driver backlight level 0 to bl_max with rounding */
-		MDSS_BRIGHT_TO_BL(bl_lvl, value, mfd->panel_info->bl_max,
-					mfd->panel_info->brightness_max);
-	}
+	/* This maps android backlight level 0 to 255 into
+	   driver backlight level 0 to bl_max with rounding */
+	MDSS_BRIGHT_TO_BL(bl_lvl, value, mfd->panel_info->bl_max,
+				mfd->panel_info->brightness_max);
 
 	if (!bl_lvl && value)
 		bl_lvl = 1;
@@ -358,26 +304,12 @@ static void mdss_fb_set_bl_brightness(struct led_classdev *led_cdev,
 		mdss_fb_set_backlight(mfd, bl_lvl);
 		mutex_unlock(&mfd->bl_lock);
 	}
-	mfd->bl_level_usr = bl_lvl;
-}
-
-static enum led_brightness mdss_fb_get_bl_brightness(
-	struct led_classdev *led_cdev)
-{
-	struct msm_fb_data_type *mfd = dev_get_drvdata(led_cdev->dev->parent);
-	enum led_brightness value;
-
-	MDSS_BL_TO_BRIGHT(value, mfd->bl_level_usr, mfd->panel_info->bl_max,
-			  mfd->panel_info->brightness_max);
-
-	return value;
 }
 
 static struct led_classdev backlight_led = {
 	.name           = "lcd-backlight",
 	.brightness     = MDSS_MAX_BL_BRIGHTNESS / 2,
 	.brightness_set = mdss_fb_set_bl_brightness,
-	.brightness_get = mdss_fb_get_bl_brightness,
 	.max_brightness = MDSS_MAX_BL_BRIGHTNESS,
 };
 
@@ -410,8 +342,11 @@ static ssize_t mdss_fb_get_type(struct device *dev,
 	case WRITEBACK_PANEL:
 		ret = snprintf(buf, PAGE_SIZE, "writeback panel\n");
 		break;
-	case DP_PANEL:
-		ret = snprintf(buf, PAGE_SIZE, "dp panel\n");
+	case EDP_PANEL:
+		ret = snprintf(buf, PAGE_SIZE, "edp panel\n");
+		break;
+	case SPI_PANEL:
+		ret = snprintf(buf, PAGE_SIZE, "spi panel\n");
 		break;
 	default:
 		ret = snprintf(buf, PAGE_SIZE, "unknown panel\n");
@@ -431,8 +366,7 @@ static int mdss_fb_get_panel_xres(struct mdss_panel_info *pinfo)
 	xres = pinfo->xres;
 	if (pdata->next && pdata->next->active)
 		xres += mdss_fb_get_panel_xres(&pdata->next->panel_info);
-	if (pinfo->split_link_enabled)
-		xres = xres * pinfo->mipi.num_of_sublinks;
+
 	return xres;
 }
 
@@ -586,7 +520,7 @@ static ssize_t mdss_fb_get_fps_info(struct device *dev,
 {
 	struct fb_info *fbi = dev_get_drvdata(dev);
 	struct msm_fb_data_type *mfd = fbi->par;
-	unsigned int fps_int, fps_float;
+	unsigned int fps_int , fps_float;
 
 	if (mfd->panel_power_state != MDSS_PANEL_POWER_ON)
 		mfd->fps_info.measured_fps = 0;
@@ -648,11 +582,6 @@ static ssize_t mdss_fb_get_panel_info(struct device *dev,
 	struct msm_fb_data_type *mfd = fbi->par;
 	struct mdss_panel_info *pinfo = mfd->panel_info;
 	int ret;
-	bool dfps_porch_mode = false;
-
-	if (pinfo->dfps_update == DFPS_IMMEDIATE_PORCH_UPDATE_MODE_HFP ||
-		pinfo->dfps_update == DFPS_IMMEDIATE_PORCH_UPDATE_MODE_VFP)
-		dfps_porch_mode = true;
 
 	ret = scnprintf(buf, PAGE_SIZE,
 			"pu_en=%d\nxstart=%d\nwalign=%d\nystart=%d\nhalign=%d\n"
@@ -660,14 +589,12 @@ static ssize_t mdss_fb_get_panel_info(struct device *dev,
 			"min_fps=%d\nmax_fps=%d\npanel_name=%s\n"
 			"primary_panel=%d\nis_pluggable=%d\ndisplay_id=%s\n"
 			"is_cec_supported=%d\nis_pingpong_split=%d\n"
-			"dfps_porch_mode=%d\npu_roi_cnt=%d\ndual_dsi=%d\n"
-			"is_hdr_enabled=%d\npeak_brightness=%d\n"
-			"blackness_level=%d\naverage_brightness=%d\n"
+			"is_hdr_enabled=%d\n"
+			"peak_brightness=%d\nblackness_level=%d\n"
 			"white_chromaticity_x=%d\nwhite_chromaticity_y=%d\n"
 			"red_chromaticity_x=%d\nred_chromaticity_y=%d\n"
 			"green_chromaticity_x=%d\ngreen_chromaticity_y=%d\n"
-			"blue_chromaticity_x=%d\nblue_chromaticity_y=%d\n"
-			"panel_orientation=%d\ndyn_bitclk_en=%d\n",
+			"blue_chromaticity_x=%d\nblue_chromaticity_y=%d\n",
 			pinfo->partial_update_enabled,
 			pinfo->roi_alignment.xstart_pix_align,
 			pinfo->roi_alignment.width_pix_align,
@@ -680,11 +607,9 @@ static ssize_t mdss_fb_get_panel_info(struct device *dev,
 			pinfo->panel_name, pinfo->is_prim_panel,
 			pinfo->is_pluggable, pinfo->display_id,
 			pinfo->is_cec_supported, is_pingpong_split(mfd),
-			dfps_porch_mode, pinfo->partial_update_enabled,
-			is_panel_split(mfd), pinfo->hdr_properties.hdr_enabled,
+			pinfo->hdr_properties.hdr_enabled,
 			pinfo->hdr_properties.peak_brightness,
 			pinfo->hdr_properties.blackness_level,
-			pinfo->hdr_properties.avg_brightness,
 			pinfo->hdr_properties.display_primaries[0],
 			pinfo->hdr_properties.display_primaries[1],
 			pinfo->hdr_properties.display_primaries[2],
@@ -692,8 +617,7 @@ static ssize_t mdss_fb_get_panel_info(struct device *dev,
 			pinfo->hdr_properties.display_primaries[4],
 			pinfo->hdr_properties.display_primaries[5],
 			pinfo->hdr_properties.display_primaries[6],
-			pinfo->hdr_properties.display_primaries[7],
-			pinfo->panel_orientation, pinfo->dynamic_bitclk);
+			pinfo->hdr_properties.display_primaries[7]);
 
 	return ret;
 }
@@ -710,7 +634,7 @@ static ssize_t mdss_fb_get_panel_status(struct device *dev,
 		ret = scnprintf(buf, PAGE_SIZE, "panel_status=%s\n", "suspend");
 	} else {
 		panel_status = mdss_fb_send_panel_event(mfd,
-				MDSS_EVENT_DSI_PANEL_STATUS, mfd);
+				MDSS_EVENT_DSI_PANEL_STATUS, NULL);
 		ret = scnprintf(buf, PAGE_SIZE, "panel_status=%s\n",
 			panel_status > 0 ? "alive" : "dead");
 	}
@@ -897,7 +821,7 @@ static ssize_t mdss_fb_get_dfps_mode(struct device *dev,
 }
 
 static ssize_t mdss_fb_change_persist_mode(struct device *dev,
-	struct device_attribute *attr, const char *buf, size_t len)
+		struct device_attribute *attr, const char *buf, size_t len)
 {
 	struct fb_info *fbi = dev_get_drvdata(dev);
 	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)fbi->par;
@@ -908,7 +832,7 @@ static ssize_t mdss_fb_change_persist_mode(struct device *dev,
 
 	if (!mfd || !mfd->panel_info) {
 		pr_err("%s: Panel info is NULL!\n", __func__);
-		return len;
+	return len;
 	}
 
 	pinfo = mfd->panel_info;
@@ -939,7 +863,6 @@ static ssize_t mdss_fb_change_persist_mode(struct device *dev,
 
 end:
 	mutex_unlock(&mfd->mdss_sysfs_lock);
-
 	return len;
 }
 
@@ -964,414 +887,6 @@ static ssize_t mdss_fb_get_persist_mode(struct device *dev,
 	return ret;
 }
 
-static ssize_t mdss_fb_idle_pc_notify(struct device *dev,
-		struct device_attribute *attr, char *buf)
-{
-	return scnprintf(buf, PAGE_SIZE, "idle power collapsed\n");
-}
-
-extern void mdss_dsi_panel_cmds_send(struct mdss_dsi_ctrl_pdata *ctrl,
-		                           struct dsi_panel_cmds *pcmds, u32 flags);
-extern int mdss_dsi_set_gamma(struct mdss_dsi_ctrl_pdata *ctrl, int val2);
-
-/* Set display feature after first backlight  */
-int mdss_first_set_feature(struct mdss_panel_data *pdata, int first_ce_state, int first_cabc_state, int first_srgb_state, int first_gamma_state)
-{
-	struct mdss_dsi_ctrl_pdata *ctrl = NULL;
-
-        ctrl = container_of(pdata, struct mdss_dsi_ctrl_pdata,
-				panel_data);
-	if(!ctrl) {
-		pr_err("%s, not available\n", __func__);
-		return -1;
-	}
-
-	if((first_ce_state != -1) || (first_cabc_state != -1) || (first_srgb_state != -1) || (first_gamma_state != -1))
-		printk("%s, first_ce_state: %d, first_cabc_state: %d, first_srgb_state=%d, first_gamma_state=%d\n", __func__,
-			first_ce_state, first_cabc_state, first_srgb_state, first_gamma_state);
-
-	switch(first_ce_state) {
-		case 0x1:
-			if (ctrl->ce_on_cmds.cmd_cnt){
-				mdss_dsi_panel_cmds_send(ctrl, &ctrl->ce_on_cmds, CMD_REQ_COMMIT);
-			}
-			break;
-		case 0x2:
-			if (ctrl->ce_off_cmds.cmd_cnt){
-				mdss_dsi_panel_cmds_send(ctrl, &ctrl->ce_off_cmds, CMD_REQ_COMMIT);
-			}
-			break;
-		default:
-			pr_debug("unknow cmds: %d\n", first_ce_state);
-			break;
-
-	}
-	switch(first_cabc_state) {
-		case 0x1:
-			if (ctrl->cabc_on_cmds.cmd_cnt){
-				mdss_dsi_panel_cmds_send(ctrl, &ctrl->cabc_on_cmds, CMD_REQ_COMMIT);
-			}
-			break;
-		case 0x2:
-			if (ctrl->cabc_off_cmds.cmd_cnt){
-				mdss_dsi_panel_cmds_send(ctrl, &ctrl->cabc_off_cmds, CMD_REQ_COMMIT);
-			}
-			break;
-		default:
-			pr_debug("unknow cmds: %d\n", first_cabc_state);
-			break;
-
-	}
-	switch(first_srgb_state) {
-		case 0x1:
-			if (ctrl->srgb_on_cmds.cmd_cnt){
-				mdss_dsi_panel_cmds_send(ctrl, &ctrl->srgb_on_cmds, CMD_REQ_COMMIT);
-			}
-			break;
-		case 0x2:
-			if (ctrl->srgb_off_cmds.cmd_cnt){
-				mdss_dsi_panel_cmds_send(ctrl, &ctrl->srgb_off_cmds, CMD_REQ_COMMIT);
-			}
-			break;
-		default:
-			pr_debug("unknow cmds: %d\n", first_srgb_state);
-			break;
-
-	}
-
-	switch(first_gamma_state) {
-		case 0x1:
-            mdss_dsi_set_gamma(ctrl, 1);
-			break;
-		case 0x2:
-            mdss_dsi_set_gamma(ctrl, 2);
-			break;
-		default:
-			pr_debug("unknow cmds: %d\n", first_gamma_state);
-			break;
-
-	}
-	return 0;
-
-}
-
-
-static ssize_t mdss_fb_set_ce(struct device *dev, struct device_attribute *attr, const char *buf, size_t len)
-{
-	struct fb_info *fbi = dev_get_drvdata(dev);
-	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)fbi->par;
-	struct mdss_panel_data *pdata;
-	struct mdss_dsi_ctrl_pdata *ctrl = NULL;
-	struct mdss_mdp_ctl *ctl = NULL;
-	int rc = 0;
-	int param = 0;
-
-
-	rc = kstrtoint(buf, 10, &param);
-	if (rc) {
-		pr_err("kstrtoint failed. rc=%d\n", rc);
-		return rc;
-	}
-
-	pdata = dev_get_platdata(&mfd->pdev->dev);
-	if (!pdata) {
-		pr_err("no panel connected!\n");
-		return len;
-	}
-        ctrl = container_of(pdata, struct mdss_dsi_ctrl_pdata,
-				panel_data);
-	if(!ctrl) {
-		pr_info("not available\n");
-		return len;
-	}
-
-	ce_state=param;
-
-	if(param>9){
-		ce_resume=true;
-		return len;
-	}
-
-	ctl = mfd_to_ctl(mfd);
-	if(!ctl) {
-		pr_debug("%s, Display is off\n", __func__);
-		return len;
-	}
-
-	if (ctl->power_state!=1) {
-		pr_debug("%s, Dsi is not power on\n", __func__);
-		return len;
-	}
-
- 	if(!first_set_bl){
-		first_ce_state=param;
-		pr_err("%s, wait first_set_bl\n", __func__);
-		return len;
-	}
-
-	pr_err("tsx_###_%s, set_ce_cmd: %d\n", __func__, param);
-
-	if(ce_resume){
-		pr_err("%s abandon ce cmd from app set\n", __func__);
-		ce_resume=false;
-		return len;
-	}
-
-	switch(param) {
-		case 0x1:
-			if (ctrl->ce_on_cmds.cmd_cnt){
-				mdss_dsi_panel_cmds_send(ctrl, &ctrl->ce_on_cmds, CMD_REQ_COMMIT);
-			}
-			break;
-		case 0x2:
-			if (ctrl->ce_off_cmds.cmd_cnt){
-				mdss_dsi_panel_cmds_send(ctrl, &ctrl->ce_off_cmds, CMD_REQ_COMMIT);
-			}
-			break;
-		default:
-			pr_err("unknow cmds: %d\n", param);
-			break;
-
-	}
-	printk("tsx ##### ce over ###\n");
-	return len;
-
-}
-
-static ssize_t mdss_fb_set_cabc(struct device *dev, struct device_attribute *attr, const char *buf, size_t len)
-{
-	struct fb_info *fbi = dev_get_drvdata(dev);
-	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)fbi->par;
-	struct mdss_panel_data *pdata;
-	struct mdss_dsi_ctrl_pdata *ctrl = NULL;
-	struct mdss_mdp_ctl *ctl = NULL;
-	int rc = 0;
-	int param = 0;
-
-
-    rc = kstrtoint(buf, 10, &param);
-	if (rc) {
-		pr_err("kstrtoint failed. rc=%d\n", rc);
-		return rc;
-	}
-
-	pdata = dev_get_platdata(&mfd->pdev->dev);
-	if (!pdata) {
-		pr_err("no panel connected!\n");
-		return len;
-	}
-        ctrl = container_of(pdata, struct mdss_dsi_ctrl_pdata,
-				panel_data);
-	if(!ctrl) {
-		pr_info("not available\n");
-		return len;
-	}
-
-	cabc_state=param;
-
-	if(param>9){
-		cabc_resume=true;
-		return len;
-	}
-
-	ctl = mfd_to_ctl(mfd);
-	if(!ctl) {
-		pr_debug("%s, Display is off\n", __func__);
-		return len;
-	}
-
-	if (ctl->power_state!=1) {
-		pr_debug("%s, Dsi is not power on\n", __func__);
-		return len;
-	}
-
- 	if(!first_set_bl){
-		first_cabc_state=param;
-		pr_err("%s, wait first_set_bl\n", __func__);
-		return len;
-	}
-
-	pr_err("guorui_###_%s, set_cabc_cmd: %d\n", __func__, param);
-
-	if(cabc_resume){
-		pr_err("%s abandon cabc cmd from app set\n", __func__);
-		cabc_resume=false;
-		return len;
-	}
-
-	switch(param) {
-		case 0x1:
-			if (ctrl->cabc_on_cmds.cmd_cnt){
-				mdss_dsi_panel_cmds_send(ctrl, &ctrl->cabc_on_cmds, CMD_REQ_COMMIT);
-			}
-			break;
-		case 0x2:
-			if (ctrl->cabc_off_cmds.cmd_cnt){
-				mdss_dsi_panel_cmds_send(ctrl, &ctrl->cabc_off_cmds, CMD_REQ_COMMIT);
-			}
-			break;
-		default:
-			pr_err("unknow cmds: %d\n", param);
-			break;
-
-	}
-	printk("guorui ##### cabc over ###\n");
-	return len;
-
-}
-
-static ssize_t mdss_fb_set_srgb(struct device *dev, struct device_attribute *attr, const char *buf, size_t len)
-{
-	struct fb_info *fbi = dev_get_drvdata(dev);
-	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)fbi->par;
-	struct mdss_panel_data *pdata;
-	struct mdss_dsi_ctrl_pdata *ctrl = NULL;
-	struct mdss_mdp_ctl *ctl = NULL;
-	int rc = 0;
-	int param = 0;
-
-
-    rc = kstrtoint(buf, 10, &param);
-	if (rc) {
-		pr_err("kstrtoint failed. rc=%d\n", rc);
-		return rc;
-	}
-
-	pdata = dev_get_platdata(&mfd->pdev->dev);
-	if (!pdata) {
-		pr_err("no panel connected!\n");
-		return len;
-	}
-        ctrl = container_of(pdata, struct mdss_dsi_ctrl_pdata,
-				panel_data);
-	if(!ctrl) {
-		pr_info("not available\n");
-		return len;
-	}
-
-	srgb_state=param;
-
-	if(param>9){
-		srgb_resume=true;
-		return len;
-	}
-
-	ctl = mfd_to_ctl(mfd);
-	if(!ctl) {
-		pr_debug("%s, Display is off\n", __func__);
-		return len;
-	}
-
-	if (ctl->power_state!=1) {
-		pr_debug("%s, Dsi is not power on\n", __func__);
-		return len;
-	}
-
- 	if(!first_set_bl){
-		first_srgb_state=param;
-		pr_err("%s, wait first_set_bl\n", __func__);
-		return len;
-	}
-
-	pr_err("guorui_###_%s, set_srgb_cmd: %d\n", __func__, param);
-
-	if(srgb_resume){
-		pr_err("%s abandon srgb cmd from app set\n", __func__);
-		srgb_resume=false;
-		return len;
-	}
-
-	switch(param) {
-		case 0x1:
-			if (ctrl->srgb_on_cmds.cmd_cnt){
-				mdss_dsi_panel_cmds_send(ctrl, &ctrl->srgb_on_cmds, CMD_REQ_COMMIT);
-			}
-			break;
-		case 0x2:
-			if (ctrl->srgb_off_cmds.cmd_cnt){
-				mdss_dsi_panel_cmds_send(ctrl, &ctrl->srgb_off_cmds, CMD_REQ_COMMIT);
-			}
-			break;
-		default:
-			pr_err("unknow cmds: %d\n", param);
-			break;
-
-	}
-	printk("guorui ##### srgb over ###\n");
-	return len;
-
-}
-
-static ssize_t mdss_fb_set_gamma(struct device *dev, struct device_attribute *attr, const char *buf, size_t len)
-{
-	struct fb_info *fbi = dev_get_drvdata(dev);
-	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)fbi->par;
-	struct mdss_panel_data *pdata;
-	struct mdss_dsi_ctrl_pdata *ctrl = NULL;
-	struct mdss_mdp_ctl *ctl = NULL;
-	int rc = 0;
-	int param = 0;
-
-
-    rc = kstrtoint(buf, 10, &param);
-	if (rc) {
-		pr_err("kstrtoint failed. rc=%d\n", rc);
-		return rc;
-	}
-
-	pdata = dev_get_platdata(&mfd->pdev->dev);
-	if (!pdata) {
-		pr_err("no panel connected!\n");
-		return len;
-	}
-        ctrl = container_of(pdata, struct mdss_dsi_ctrl_pdata,
-				panel_data);
-	if(!ctrl) {
-		pr_info("not available\n");
-		return len;
-	}
-
-	gamma_state=param;
-
-	if(param>9){
-		gamma_resume=true;
-		return len;
-	}
-
-	ctl = mfd_to_ctl(mfd);
-	if(!ctl) {
-		pr_debug("%s, Display is off\n", __func__);
-		return len;
-	}
-
-	if (ctl->power_state!=1) {
-		pr_debug("%s, Dsi is not power on\n", __func__);
-		return len;
-	}
-
- 	if(!first_set_bl){
-		first_gamma_state=param;
-		pr_err("%s, wait first_set_bl\n", __func__);
-		return len;
-	}
-
-	pr_err("guorui_###_%s, set_gamma_cmd: %d\n", __func__, param);
-
-	if(gamma_resume){
-		pr_err("%s abandon gamma cmd from app set\n", __func__);
-		gamma_resume=false;
-		return len;
-	}
-
-    mdss_dsi_set_gamma(ctrl, param);
-
-	printk("guorui ##### gamma over ###\n");
-	return len;
-
-}
-
-
-
 static DEVICE_ATTR(msm_fb_type, S_IRUGO, mdss_fb_get_type, NULL);
 static DEVICE_ATTR(msm_fb_split, S_IRUGO | S_IWUSR, mdss_fb_show_split,
 					mdss_fb_store_split);
@@ -1392,13 +907,6 @@ static DEVICE_ATTR(measured_fps, S_IRUGO | S_IWUSR | S_IWGRP,
 	mdss_fb_get_fps_info, NULL);
 static DEVICE_ATTR(msm_fb_persist_mode, S_IRUGO | S_IWUSR,
 	mdss_fb_get_persist_mode, mdss_fb_change_persist_mode);
-static DEVICE_ATTR(idle_power_collapse, S_IRUGO, mdss_fb_idle_pc_notify, NULL);
-static DEVICE_ATTR(msm_fb_ce, 0644, NULL, mdss_fb_set_ce);
-static DEVICE_ATTR(msm_fb_cabc, 0644, NULL, mdss_fb_set_cabc);
-static DEVICE_ATTR(msm_fb_srgb, 0644, NULL, mdss_fb_set_srgb);
-static DEVICE_ATTR(msm_fb_gamma, 0644, NULL, mdss_fb_set_gamma);
-
-
 static struct attribute *mdss_fb_attrs[] = {
 	&dev_attr_msm_fb_type.attr,
 	&dev_attr_msm_fb_split.attr,
@@ -1412,11 +920,6 @@ static struct attribute *mdss_fb_attrs[] = {
 	&dev_attr_msm_fb_dfps_mode.attr,
 	&dev_attr_measured_fps.attr,
 	&dev_attr_msm_fb_persist_mode.attr,
-	&dev_attr_idle_power_collapse.attr,
-	&dev_attr_msm_fb_ce.attr,
-	&dev_attr_msm_fb_cabc.attr,
-	&dev_attr_msm_fb_srgb.attr,
-	&dev_attr_msm_fb_gamma.attr,
 	NULL,
 };
 
@@ -1424,30 +927,14 @@ static struct attribute_group mdss_fb_attr_group = {
 	.attrs = mdss_fb_attrs,
 };
 
-#ifdef DSI_ACCESS
-extern struct dsi_access dsi_access;
-#endif
-
 static int mdss_fb_create_sysfs(struct msm_fb_data_type *mfd)
 {
 	int rc;
 
-#ifdef DSI_ACCESS
-	if (mfd->panel.type == MIPI_VIDEO_PANEL ||
-			mfd->panel.type == MIPI_CMD_PANEL) {
-		dsi_access.sysfs_dir = kobject_create_and_add(DSI_ACCESS_DIR,
-				&mfd->fbi->dev->kobj);
-		rc = sysfs_create_group(dsi_access.sysfs_dir,
-				&dsi_access.attr_group);
-		if (rc)
-			pr_err("dsi_access sysfs creation failed, rc=%d\n", rc);
-	}
-#endif
-
 	rc = sysfs_create_group(&mfd->fbi->dev->kobj, &mdss_fb_attr_group);
 	if (rc)
 		pr_err("sysfs group creation failed, rc=%d\n", rc);
-	return mdss_livedisplay_create_sysfs(mfd);
+	return rc;
 }
 
 static void mdss_fb_remove_sysfs(struct msm_fb_data_type *mfd)
@@ -1458,6 +945,9 @@ static void mdss_fb_remove_sysfs(struct msm_fb_data_type *mfd)
 static void mdss_fb_shutdown(struct platform_device *pdev)
 {
 	struct msm_fb_data_type *mfd = platform_get_drvdata(pdev);
+
+	if (!mfd)
+		return;
 
 	mfd->shutdown_pending = true;
 
@@ -1676,24 +1166,11 @@ static int mdss_fb_init_panel_modes(struct msm_fb_data_type *mfd,
 		if (pdata->next) {
 			spt = mdss_panel_get_timing_by_name(pdata->next,
 					modedb[i].name);
-			/* for split config, recalculate xres and pixel clock */
-			if (!IS_ERR_OR_NULL(spt)) {
-				unsigned long pclk, h_total, v_total;
+			if (!IS_ERR_OR_NULL(spt))
 				modedb[i].xres += spt->xres;
-				h_total = modedb[i].xres +
-					modedb[i].left_margin +
-					modedb[i].right_margin +
-					modedb[i].hsync_len;
-				v_total = modedb[i].yres +
-					modedb[i].lower_margin +
-					modedb[i].upper_margin +
-					modedb[i].vsync_len;
-				pclk = h_total * v_total * modedb[i].refresh;
-				modedb[i].pixclock = KHZ2PICOS(pclk / 1000);
-			} else {
+			else
 				pr_debug("no matching split config for %s\n",
 						modedb[i].name);
-			}
 
 			/*
 			 * if no panel timing found for current, need to
@@ -1728,8 +1205,8 @@ static int mdss_fb_probe(struct platform_device *pdev)
 	struct msm_fb_data_type *mfd = NULL;
 	struct mdss_panel_data *pdata;
 	struct fb_info *fbi;
-	struct mdss_overlay_private *mdp5_data = NULL;
 	int rc;
+	const char *data;
 
 	if (fbi_list_index >= MAX_FBI_LIST)
 		return -ENOMEM;
@@ -1770,15 +1247,29 @@ static int mdss_fb_probe(struct platform_device *pdev)
 		mfd->bl_level = 0;
 
 	mfd->bl_scale = 1024;
+	mfd->bl_min_lvl = 30;
 	mfd->ad_bl_level = 0;
 	mfd->fb_imgType = MDP_RGBA_8888;
 	mfd->calib_mode_bl = 0;
 	mfd->unset_bl_level = U32_MAX;
-	mfd->bl_extn_level = -1;
-	mfd->bl_level_usr = backlight_led.brightness;
 
 	mfd->pdev = pdev;
 
+	if (mfd->panel.type == SPI_PANEL)
+		mfd->fb_imgType = MDP_RGB_565;
+	if (mfd->panel.type == MIPI_VIDEO_PANEL || mfd->panel.type ==
+		MIPI_CMD_PANEL || mfd->panel.type == SPI_PANEL){
+		rc = of_property_read_string(pdev->dev.of_node,
+			"qcom,mdss-fb-format", &data);
+		if (!rc) {
+			if (!strcmp(data, "rgb888"))
+				mfd->fb_imgType = MDP_RGB_888;
+			else if (!strcmp(data, "rgb565"))
+				mfd->fb_imgType = MDP_RGB_565;
+			else
+				mfd->fb_imgType = MDP_RGBA_8888;
+		}
+	}
 	mfd->split_fb_left = mfd->split_fb_right = 0;
 
 	mdss_fb_set_split_mode(mfd, pdata);
@@ -1851,13 +1342,6 @@ static int mdss_fb_probe(struct platform_device *pdev)
 		}
 		mfd->mdp_sync_pt_data.notifier.notifier_call =
 			__mdss_fb_sync_buf_done_callback;
-
-		/* Initialize CWB notifier callback */
-		mdp5_data = mfd_to_mdp5_data(mfd);
-		if (test_bit(MDSS_CAPS_CWB_SUPPORTED,
-					mdp5_data->mdata->mdss_caps_map))
-			mdp5_data->cwb.cwb_sync_pt_data.notifier.notifier_call =
-				__mdss_fb_sync_buf_done_callback;
 	}
 
 	mdss_fb_set_mdp_sync_pt_threshold(mfd, mfd->panel.type);
@@ -1874,8 +1358,9 @@ static int mdss_fb_probe(struct platform_device *pdev)
 	 * an idle event, user space tries to fall back to GPU composition which
 	 * can lead to increased load when there are new frames.
 	 */
-	if ((mfd->panel_info->type == MIPI_CMD_PANEL) ||
-	    (mfd->panel_info->type == MIPI_VIDEO_PANEL))
+	if (mfd->mdp.input_event_handler &&
+		((mfd->panel_info->type == MIPI_CMD_PANEL) ||
+		(mfd->panel_info->type == MIPI_VIDEO_PANEL)))
 		if (mdss_fb_register_input_handler(mfd))
 			pr_err("failed to register input handler\n");
 
@@ -1895,6 +1380,7 @@ static void mdss_fb_set_mdp_sync_pt_threshold(struct msm_fb_data_type *mfd,
 		mfd->mdp_sync_pt_data.threshold = 1;
 		mfd->mdp_sync_pt_data.retire_threshold = 0;
 		break;
+	case SPI_PANEL:
 	case MIPI_CMD_PANEL:
 		mfd->mdp_sync_pt_data.threshold = 1;
 		mfd->mdp_sync_pt_data.retire_threshold = 1;
@@ -1914,11 +1400,7 @@ static int mdss_fb_remove(struct platform_device *pdev)
 
 	if (!mfd)
 		return -ENODEV;
-	if (mfd->panel_info && mfd->panel_info->is_prim_panel) {
-		atomic_set(&prim_panel_is_on, false);
-		cancel_delayed_work_sync(&prim_panel_work);
-		wake_lock_destroy(&prim_panel_wakelock);
-	}
+
 	mdss_fb_remove_sysfs(mfd);
 
 	pm_runtime_disable(mfd->fbi->dev);
@@ -2094,56 +1576,16 @@ static int mdss_fb_resume(struct platform_device *pdev)
 #endif
 
 #ifdef CONFIG_PM_SLEEP
-static int mdss_fb_pm_prepare(struct device *dev)
-{
-	struct msm_fb_data_type *mfd = dev_get_drvdata(dev);
-
-	if (!mfd)
-		return -ENODEV;
-	if (mfd->panel_info->is_prim_panel)
-		atomic_inc(&mfd->resume_pending);
-	return 0;
-}
-
-static void mdss_fb_pm_complete(struct device *dev)
-{
-	struct msm_fb_data_type *mfd = dev_get_drvdata(dev);
-
-	if (!mfd)
-		return;
-	if (mfd->panel_info->is_prim_panel) {
-		atomic_set(&mfd->resume_pending, 0);
-		wake_up_all(&mfd->resume_wait_q);
-	}
-	return;
-}
 static int mdss_fb_pm_suspend(struct device *dev)
 {
 	struct msm_fb_data_type *mfd = dev_get_drvdata(dev);
-	int rc = 0;
 
 	if (!mfd)
 		return -ENODEV;
 
 	dev_dbg(dev, "display pm suspend\n");
 
-	rc = mdss_fb_suspend_sub(mfd);
-
-	/*
-	 * Call MDSS footswitch control to ensure GDSC is
-	 * off after pm suspend call. There are cases when
-	 * mdss runtime call doesn't trigger even when clock
-	 * ref count is zero after fb pm suspend.
-	 */
-	if (!rc) {
-		if (mfd->mdp.footswitch_ctrl)
-			mfd->mdp.footswitch_ctrl(false);
-	} else {
-		pr_err("fb pm suspend failed, rc: %d\n", rc);
-	}
-
-	return rc;
-
+	return mdss_fb_suspend_sub(mfd);
 }
 
 static int mdss_fb_pm_resume(struct device *dev)
@@ -2163,16 +1605,11 @@ static int mdss_fb_pm_resume(struct device *dev)
 	pm_runtime_set_suspended(dev);
 	pm_runtime_enable(dev);
 
-	if (mfd->mdp.footswitch_ctrl)
-		mfd->mdp.footswitch_ctrl(true);
-
 	return mdss_fb_resume_sub(mfd);
 }
 #endif
 
 static const struct dev_pm_ops mdss_fb_pm_ops = {
-	.prepare = mdss_fb_pm_prepare,
-	.complete = mdss_fb_pm_complete,
 	SET_SYSTEM_SLEEP_PM_OPS(mdss_fb_pm_suspend, mdss_fb_pm_resume)
 };
 
@@ -2200,22 +1637,27 @@ static void mdss_fb_scale_bl(struct msm_fb_data_type *mfd, u32 *bl_lvl)
 	u32 temp = *bl_lvl;
 
 	pr_debug("input = %d, scale = %d\n", temp, mfd->bl_scale);
-	if (temp > mfd->panel_info->bl_max) {
-		pr_warn("%s: invalid bl level\n",
+	if (temp >= mfd->bl_min_lvl) {
+		if (temp > mfd->panel_info->bl_max) {
+			pr_warn("%s: invalid bl level\n",
 				__func__);
-		temp = mfd->panel_info->bl_max;
-	}
-	if (mfd->bl_scale > 1024) {
-		pr_warn("%s: invalid bl scale\n",
+			temp = mfd->panel_info->bl_max;
+		}
+		if (mfd->bl_scale > 1024) {
+			pr_warn("%s: invalid bl scale\n",
 				__func__);
-		mfd->bl_scale = 1024;
-	}
-	/*
-	 * bl_scale is the numerator of
-	 * scaling fraction (x/1024)
-	 */
-	temp = (temp * mfd->bl_scale) / 1024;
+			mfd->bl_scale = 1024;
+		}
+		/*
+		 * bl_scale is the numerator of
+		 * scaling fraction (x/1024)
+		 */
+		temp = (temp * mfd->bl_scale) / 1024;
 
+		/*if less than minimum level, use min level*/
+		if (temp < mfd->bl_min_lvl)
+			temp = mfd->bl_min_lvl;
+	}
 	pr_debug("output = %d\n", temp);
 
 	(*bl_lvl) = temp;
@@ -2228,8 +1670,8 @@ void mdss_fb_set_backlight(struct msm_fb_data_type *mfd, u32 bkl_lvl)
 	u32 temp = bkl_lvl;
 	bool ad_bl_notify_needed = false;
 	bool bl_notify_needed = false;
+	bool twm_en = false;
 
-	printk("%s\n", __func__);
 	if ((((mdss_fb_is_power_off(mfd) && mfd->dcm_state != DCM_ENTER)
 		|| !mfd->allow_bl_update) && !IS_CALIB_MODE_BL(mfd)) ||
 		mfd->panel_info->cont_splash_enabled) {
@@ -2263,9 +1705,16 @@ void mdss_fb_set_backlight(struct msm_fb_data_type *mfd, u32 bkl_lvl)
 			if (mfd->bl_level != bkl_lvl)
 				bl_notify_needed = true;
 			pr_debug("backlight sent to panel :%d\n", temp);
-			pdata->set_backlight(pdata, temp);
-			mfd->bl_level = bkl_lvl;
-			mfd->bl_level_scaled = temp;
+			if (mfd->mdp.is_twm_en)
+				twm_en = mfd->mdp.is_twm_en();
+
+			if (twm_en) {
+				pr_info("TWM Enabled skip backlight update\n");
+			} else {
+				pdata->set_backlight(pdata, temp);
+				mfd->bl_level = bkl_lvl;
+				mfd->bl_level_scaled = temp;
+			}
 		}
 		if (ad_bl_notify_needed)
 			mdss_fb_bl_update_notify(mfd,
@@ -2366,6 +1815,20 @@ static void mdss_panel_validate_debugfs_info(struct msm_fb_data_type *mfd)
 	}
 }
 
+static void mdss_fb_signal_retire_fence(struct msm_fb_data_type *mfd)
+{
+#ifdef TARGET_HW_MDSS_MDP3
+	struct mdp3_session_data *mdp3_session = mfd_to_mdp3_data(mfd);
+	int retire_cnt = mdp3_session->retire_cnt;
+#else
+	struct mdss_overlay_private *mdp5_data = mfd_to_mdp5_data(mfd);
+	int retire_cnt = mdp5_data->retire_cnt;
+#endif
+
+	if (mfd->mdp.signal_retire_fence)
+		mfd->mdp.signal_retire_fence(mfd, retire_cnt);
+}
+
 static int mdss_fb_blank_blank(struct msm_fb_data_type *mfd,
 	int req_power_state)
 {
@@ -2413,10 +1876,13 @@ static int mdss_fb_blank_blank(struct msm_fb_data_type *mfd,
 	mfd->panel_power_state = req_power_state;
 
 	ret = mfd->mdp.off_fnc(mfd);
-	if (ret)
+	if (ret) {
 		mfd->panel_power_state = cur_power_state;
-	else if (mdss_panel_is_power_off(req_power_state))
+	} else if (!mdss_panel_is_power_on_interactive(req_power_state)) {
 		mdss_fb_release_fences(mfd);
+		if (mfd->panel.type == MIPI_CMD_PANEL)
+			mdss_fb_signal_retire_fence(mfd);
+	}
 	mfd->op_enable = true;
 	complete(&mfd->power_off_comp);
 
@@ -2506,10 +1972,7 @@ static int mdss_fb_blank_unblank(struct msm_fb_data_type *mfd)
 		}
 		mutex_unlock(&mfd->bl_lock);
 	}
-    ce_resume = false;
-    cabc_resume = false;
-    srgb_resume = false;
-    gamma_resume = false;
+
 error:
 	return ret;
 }
@@ -2542,6 +2005,14 @@ static int mdss_fb_blank_sub(int blank_mode, struct fb_info *info,
 	 * supported for command mode panels. For all other panel, treat lp
 	 * mode as full unblank and ulp mode as full blank.
 	 */
+	if ((mfd->panel_info->type == SPI_PANEL) &&
+		((BLANK_FLAG_LP == blank_mode) ||
+		(BLANK_FLAG_ULP == blank_mode))) {
+		pr_debug("lp/ulp mode are not supported for SPI panels\n");
+		if (mdss_fb_is_power_on_interactive(mfd))
+			return 0;
+	}
+
 	if (mfd->panel_info->type != MIPI_CMD_PANEL) {
 		if (BLANK_FLAG_LP == blank_mode) {
 			pr_debug("lp mode only valid for cmd mode panels\n");
@@ -2594,11 +2065,7 @@ static int mdss_fb_blank_sub(int blank_mode, struct fb_info *info,
 	case FB_BLANK_POWERDOWN:
 	default:
 		req_power_state = MDSS_PANEL_POWER_OFF;
-        ce_resume = true;
-        cabc_resume = true;
-        srgb_resume = true;
-        gamma_resume = true;
-		printk("%s:blank powerdown called\n", __func__);
+		pr_debug("blank powerdown called\n");
 		ret = mdss_fb_blank_blank(mfd, req_power_state);
 		break;
 	}
@@ -2617,22 +2084,13 @@ static int mdss_fb_blank(int blank_mode, struct fb_info *info)
 	struct mdss_panel_data *pdata;
 	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)info->par;
 
-	if ((info == prim_fbi) && (blank_mode == FB_BLANK_UNBLANK) &&
-		atomic_read(&prim_panel_is_on)) {
-		atomic_set(&prim_panel_is_on, false);
-		wake_unlock(&prim_panel_wakelock);
-		cancel_delayed_work_sync(&prim_panel_work);
-		return 0;
-	}
 	ret = mdss_fb_pan_idle(mfd);
 	if (ret) {
 		pr_warn("mdss_fb_pan_idle for fb%d failed. ret=%d\n",
 			mfd->index, ret);
 		return ret;
 	}
-
 	mutex_lock(&mfd->mdss_sysfs_lock);
-
 	if (mfd->op_enable == 0) {
 		if (blank_mode == FB_BLANK_UNBLANK)
 			mfd->suspend.panel_power_state = MDSS_PANEL_POWER_ON;
@@ -2642,7 +2100,6 @@ static int mdss_fb_blank(int blank_mode, struct fb_info *info)
 			mfd->suspend.panel_power_state = MDSS_PANEL_POWER_LP1;
 		else
 			mfd->suspend.panel_power_state = MDSS_PANEL_POWER_OFF;
-
 		ret = 0;
 		goto end;
 	}
@@ -2658,15 +2115,10 @@ static int mdss_fb_blank(int blank_mode, struct fb_info *info)
 		pdata->panel_info.is_lpm_mode = false;
 	}
 
-	if (pdata->panel_disable_mode)
-		mdss_mdp_enable_panel_disable_mode(mfd, false);
-
 	ret = mdss_fb_blank_sub(blank_mode, info, mfd->op_enable);
-	MDSS_XLOG(blank_mode);
 
 end:
 	mutex_unlock(&mfd->mdss_sysfs_lock);
-
 	return ret;
 }
 
@@ -2779,7 +2231,7 @@ int mdss_fb_alloc_fb_ion_memory(struct msm_fb_data_type *mfd, size_t fb_size)
 		rc = PTR_ERR(vaddr);
 		goto err_unmap;
 	}
-	pr_debug("alloc %zuB vaddr = %pK for fb%d\n", fb_size,
+	pr_debug("alloc 0x%zuB vaddr = %pK for fb%d\n", fb_size,
 			vaddr, mfd->index);
 
 	mfd->fbi->screen_base = (char *) vaddr;
@@ -3260,7 +2712,7 @@ static int mdss_fb_register(struct msm_fb_data_type *mfd)
 	atomic_set(&mfd->commits_pending, 0);
 	atomic_set(&mfd->ioctl_ref_cnt, 0);
 	atomic_set(&mfd->kickoff_pending, 0);
-	atomic_set(&mfd->resume_pending, 0);
+
 	init_timer(&mfd->no_update.timer);
 	mfd->no_update.timer.function = mdss_fb_no_update_notify_timer_cb;
 	mfd->no_update.timer.data = (unsigned long)mfd;
@@ -3275,7 +2727,7 @@ static int mdss_fb_register(struct msm_fb_data_type *mfd)
 	init_waitqueue_head(&mfd->idle_wait_q);
 	init_waitqueue_head(&mfd->ioctl_q);
 	init_waitqueue_head(&mfd->kickoff_wait_q);
-	init_waitqueue_head(&mfd->resume_wait_q);
+
 	ret = fb_alloc_cmap(&fbi->cmap, 256, 0);
 	if (ret)
 		pr_err("fb_alloc_cmap() failed!\n");
@@ -3293,12 +2745,6 @@ static int mdss_fb_register(struct msm_fb_data_type *mfd)
 	pr_info("FrameBuffer[%d] %dx%d registered successfully!\n", mfd->index,
 					fbi->var.xres, fbi->var.yres);
 
-	if (panel_info->is_prim_panel) {
-		prim_fbi = fbi;
-		atomic_set(&prim_panel_is_on, false);
-		INIT_DELAYED_WORK(&prim_panel_work, prim_panel_off_delayed_work);
-		wake_lock_init(&prim_panel_wakelock, WAKE_LOCK_SUSPEND, "prim_panel_wakelock");
-	}
 	return 0;
 }
 
@@ -3426,9 +2872,7 @@ static int mdss_fb_release_all(struct fb_info *info, bool release_all)
 		 * enabling ahead of unblank. for some special cases like
 		 * adb shell stop/start.
 		 */
-		mutex_lock(&mfd->bl_lock);
 		mdss_fb_set_backlight(mfd, 0);
-		mutex_unlock(&mfd->bl_lock);
 
 		ret = mdss_fb_blank_sub(FB_BLANK_POWERDOWN, info,
 			mfd->op_enable);
@@ -3536,7 +2980,8 @@ static int __mdss_fb_wait_for_fence_sub(struct msm_sync_pt_data *sync_pt_data,
 					fences[i]->name);
 			pr_cont("Waiting %ld.%ld more seconds\n",
 				(wait_ms/MSEC_PER_SEC), (wait_ms%MSEC_PER_SEC));
-
+			MDSS_XLOG(sync_pt_data->timeline_value);
+			MDSS_XLOG_TOUT_HANDLER("mdp");
 			ret = sync_fence_wait(fences[i], wait_ms);
 
 			if (ret == -ETIME)
@@ -3582,6 +3027,7 @@ void mdss_fb_signal_timeline(struct msm_sync_pt_data *sync_pt_data)
 	if (atomic_add_unless(&sync_pt_data->commit_cnt, -1, 0) &&
 			sync_pt_data->timeline) {
 		sw_sync_timeline_inc(sync_pt_data->timeline, 1);
+		MDSS_XLOG(sync_pt_data->timeline_value);
 		sync_pt_data->timeline_value++;
 
 		pr_debug("%s: buffer signaled! timeline val=%d remaining=%d\n",
@@ -3967,13 +3413,13 @@ int mdss_fb_atomic_commit(struct fb_info *info,
 			__ioctl_transition_dyn_mode_state(mfd,
 				MSMFB_ATOMIC_COMMIT, true, false);
 			if (mfd->panel.type == WRITEBACK_PANEL) {
-				output_layer = commit_v1->output_layer;
-				if (!output_layer) {
+				if (!commit_v1->output_layer) {
 					pr_err("Output layer is null\n");
 					goto end;
 				}
+				output_layer = commit_v1->output_layer;
 				wb_change = !mdss_fb_is_wb_config_same(mfd,
-						commit_v1->output_layer);
+						output_layer);
 				if (wb_change) {
 					old_xres = pinfo->xres;
 					old_yres = pinfo->yres;
@@ -4010,15 +3456,6 @@ int mdss_fb_atomic_commit(struct fb_info *info,
 	mfd->msm_fb_backup.atomic_commit = true;
 	mfd->msm_fb_backup.disp_commit.l_roi =  commit_v1->left_roi;
 	mfd->msm_fb_backup.disp_commit.r_roi =  commit_v1->right_roi;
-	mfd->msm_fb_backup.disp_commit.flags =  commit_v1->flags;
-	if (commit_v1->flags & MDP_COMMIT_UPDATE_BRIGHTNESS) {
-		MDSS_BRIGHT_TO_BL(mfd->bl_extn_level, commit_v1->bl_level,
-			mfd->panel_info->bl_max,
-			mfd->panel_info->brightness_max);
-		if (!mfd->bl_extn_level && commit_v1->bl_level)
-			mfd->bl_extn_level = 1;
-	} else
-		mfd->bl_extn_level = -1;
 
 	mutex_lock(&mfd->mdp_sync_pt_data.sync_mutex);
 	atomic_inc(&mfd->mdp_sync_pt_data.commit_cnt);
@@ -4041,19 +3478,16 @@ static int mdss_fb_pan_display(struct fb_var_screeninfo *var,
 {
 	struct mdp_display_commit disp_commit;
 	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)info->par;
-	struct mdss_data_type *mdata = mfd_to_mdata(mfd);
 
 	/*
-	 * Abort pan_display operations in following cases:
-	 * 1. during mode switch through mode sysfs node, it will trigger a
-	 *    pan_display after switch. This assumes that fb has been adjusted,
-	 *    however when using overlays we may not have the right size at this
-	 *    point, so it needs to go through PREPARE first.
-	 * 2. When the splash handoff is pending.
+	 * during mode switch through mode sysfs node, it will trigger a
+	 * pan_display after switch. This assumes that fb has been adjusted,
+	 * however when using overlays we may not have the right size at this
+	 * point, so it needs to go through PREPARE first. Abort pan_display
+	 * operations until that happens
 	 */
-	if ((mfd->switch_state != MDSS_MDP_NO_UPDATE_REQUESTED) ||
-		(mdss_fb_is_hdmi_primary(mfd) && mdata->handoff_pending)) {
-		pr_debug("fb%d: pan_display skipped during switch or handoff\n",
+	if (mfd->switch_state != MDSS_MDP_NO_UPDATE_REQUESTED) {
+		pr_debug("fb%d: pan_display skipped during switch\n",
 				mfd->index);
 		return 0;
 	}
@@ -4068,11 +3502,6 @@ static int mdss_fb_pan_display_sub(struct fb_var_screeninfo *var,
 			       struct fb_info *info)
 {
 	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)info->par;
-
-	if (!mfd || !var) {
-		pr_err("Invalid parameters mfd:%pK var:%pK\n", mfd, var);
-		return -EINVAL;
-	}
 
 	if (!mfd->op_enable)
 		return -EPERM;
@@ -4157,16 +3586,6 @@ static void mdss_fb_var_to_panelinfo(struct fb_var_screeninfo *var,
 	 */
 	if (pinfo->is_dba_panel)
 		pinfo->mipi.dsi_pclk_rate = pinfo->clk_rate;
-
-	if (var->sync & FB_SYNC_HOR_HIGH_ACT)
-		pinfo->lcdc.h_polarity = 0;
-	else
-		pinfo->lcdc.h_polarity = 1;
-
-	if (var->sync & FB_SYNC_VERT_HIGH_ACT)
-		pinfo->lcdc.v_polarity = 0;
-	else
-		pinfo->lcdc.v_polarity = 1;
 }
 
 void mdss_panelinfo_to_fb_var(struct mdss_panel_info *pinfo,
@@ -4185,7 +3604,8 @@ void mdss_panelinfo_to_fb_var(struct mdss_panel_info *pinfo,
 	var->left_margin = pinfo->lcdc.h_back_porch;
 	var->hsync_len = pinfo->lcdc.h_pulse_width;
 
-	frame_rate = mdss_panel_get_framerate(pinfo);
+	frame_rate = mdss_panel_get_framerate(pinfo,
+					FPS_RESOLUTION_HZ);
 	if (frame_rate) {
 		unsigned long clk_rate, h_total, v_total;
 
@@ -4280,11 +3700,10 @@ skip_commit:
 	if (IS_ERR_VALUE(ret) || !sync_pt_data->flushed) {
 		mdss_fb_release_kickoff(mfd);
 		mdss_fb_signal_timeline(sync_pt_data);
-
-		if ((mfd->panel.type == MIPI_CMD_PANEL) &&
-			(mfd->mdp.signal_retire_fence))
-			mfd->mdp.signal_retire_fence(mfd, 1);
+		if (mfd->panel.type == MIPI_CMD_PANEL)
+			mdss_fb_signal_retire_fence(mfd);
 	}
+
 	if (dynamic_dsi_switch) {
 		MDSS_XLOG(mfd->index, mfd->split_mode, new_dsi_mode,
 			XLOG_FUNC_EXIT);
@@ -4318,14 +3737,9 @@ static int __mdss_fb_display_thread(void *data)
 				mfd->index);
 
 	while (1) {
-		ret = wait_event_interruptible(mfd->commit_wait_q,
+		wait_event(mfd->commit_wait_q,
 				(atomic_read(&mfd->commits_pending) ||
 				 kthread_should_stop()));
-
-		if (ret) {
-			pr_info("%s: interrupted", __func__);
-			continue;
-		}
 
 		if (kthread_should_stop())
 			break;
@@ -4531,7 +3945,7 @@ static int mdss_fb_set_par(struct fb_info *info)
 {
 	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)info->par;
 	struct fb_var_screeninfo *var = &info->var;
-	int old_imgType, old_format, out_format;
+	int old_imgType, old_format;
 	int ret = 0;
 
 	ret = mdss_fb_pan_idle(mfd);
@@ -4614,23 +4028,21 @@ static int mdss_fb_set_par(struct fb_info *info)
 		mfd->fbi->fix.smem_len = PAGE_ALIGN(mfd->fbi->fix.line_length *
 				mfd->fbi->var.yres) * mfd->fb_page;
 
-	old_format = mfd->panel_info->out_format;
-	out_format = mdss_grayscale_to_mdp_format(var->grayscale);
-	if (!IS_ERR_VALUE(out_format)) {
-		mfd->panel_info->out_format = out_format;
+	old_format = mdss_grayscale_to_mdp_format(var->grayscale);
+	if (!IS_ERR_VALUE(old_format)) {
 		if (old_format != mfd->panel_info->out_format)
 			mfd->panel_reconfig = true;
 	}
 
-	if (mdss_fb_is_hdmi_primary(mfd) && mfd->panel_reconfig)
-		mfd->force_null_commit = true;
-
 	if (mfd->panel_reconfig || (mfd->fb_imgType != old_imgType)) {
 		mdss_fb_blank_sub(FB_BLANK_POWERDOWN, info, mfd->op_enable);
 		mdss_fb_var_to_panelinfo(var, mfd->panel_info);
+		if (mfd->panel_info->is_dba_panel &&
+			mdss_fb_send_panel_event(mfd, MDSS_EVENT_UPDATE_PARAMS,
+							mfd->panel_info))
+			pr_debug("Failed to send panel event UPDATE_PARAMS\n");
 		mdss_fb_blank_sub(FB_BLANK_UNBLANK, info, mfd->op_enable);
 		mfd->panel_reconfig = false;
-		mfd->force_null_commit = false;
 	}
 
 	return ret;
@@ -4866,11 +4278,6 @@ static int mdss_fb_handle_buf_sync_ioctl(struct msm_sync_pt_data *sync_pt_data,
 		return ret;
 	}
 
-	i = mdss_fb_wait_for_fence(sync_pt_data);
-	if (i > 0)
-		pr_warn("%s: waited on %d active fences\n",
-				sync_pt_data->fence_name, i);
-
 	mutex_lock(&sync_pt_data->sync_mutex);
 	for (i = 0; i < buf_sync->acq_fen_fd_cnt; i++) {
 		fence = sync_fence_fdget(acq_fen_fd[i]);
@@ -4881,15 +4288,29 @@ static int mdss_fb_handle_buf_sync_ioctl(struct msm_sync_pt_data *sync_pt_data,
 			ret = -EINVAL;
 			break;
 		}
+		if (sync_fence_signaled(fence)) {
+			ret = -EINVAL;
+			break;
+		}
 		sync_pt_data->acq_fen[i] = fence;
 	}
 	sync_pt_data->acq_fen_cnt = i;
 	if (ret)
 		goto buf_sync_err_1;
 
+	i = mdss_fb_wait_for_fence(sync_pt_data);
+	if (i > 0)
+		pr_warn("%s: waited on %d active fences\n",
+				sync_pt_data->fence_name, i);
+
 	val = sync_pt_data->timeline_value + sync_pt_data->threshold +
 			atomic_read(&sync_pt_data->commit_cnt);
 
+	MDSS_XLOG(sync_pt_data->timeline_value, val,
+		atomic_read(&sync_pt_data->commit_cnt));
+	pr_debug("%s: fence CTL%d Commit_cnt%d\n", sync_pt_data->fence_name,
+		sync_pt_data->timeline_value,
+		atomic_read(&sync_pt_data->commit_cnt));
 	/* Set release fence */
 	rel_fence = mdss_fb_sync_get_fence(sync_pt_data->timeline,
 			sync_pt_data->fence_name, val);
@@ -4955,10 +4376,10 @@ static int mdss_fb_handle_buf_sync_ioctl(struct msm_sync_pt_data *sync_pt_data,
 		goto buf_sync_err_3;
 	}
 
-	sync_fence_install(rel_fence, rel_fen_fd);
 	sync_fence_install(retire_fence, retire_fen_fd);
 
 skip_retire_fence:
+	sync_fence_install(rel_fence, rel_fen_fd);
 	mutex_unlock(&sync_pt_data->sync_mutex);
 
 	if (buf_sync->flags & MDP_BUF_SYNC_FLAG_WAIT)
@@ -5005,7 +4426,6 @@ static void __mdss_fb_copy_pixel_ext(struct mdp_scale_data *src,
 {
 	if (!src || !dest)
 		return;
-	dest->enable = true;
 	memcpy(dest->init_phase_x, src->init_phase_x,
 		sizeof(src->init_phase_x));
 	memcpy(dest->phase_step_x, src->phase_step_x,
@@ -5100,117 +4520,20 @@ err:
 	return ret;
 }
 
-static int __mdss_fb_copy_destscaler_data(struct fb_info *info,
-		struct mdp_layer_commit *commit)
-{
-	int    i = 0;
-	int    ret = 0;
-	u32    data_size;
-	struct mdp_destination_scaler_data __user *ds_data_user;
-	struct mdp_destination_scaler_data *ds_data = NULL;
-	void __user *scale_data_user;
-	struct mdp_scale_data_v2 *scale_data = NULL;
-	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)info->par;
-	struct mdss_data_type *mdata;
-
-	if (!mfd || !mfd->mdp.private1) {
-		pr_err("mfd is NULL or operation not permitted\n");
-		ret = -EINVAL;
-		goto err;
-	}
-
-	mdata = mfd_to_mdata(mfd);
-	if (!mdata) {
-		pr_err("mdata is NULL or not initialized\n");
-		ret = -EINVAL;
-		goto err;
-	}
-
-	if (commit->commit_v1.dest_scaler_cnt >
-			mdata->scaler_off->ndest_scalers) {
-		pr_err("Commit destination scaler cnt larger than HW setting, commit cnt=%d\n",
-				commit->commit_v1.dest_scaler_cnt);
-		ret = -EINVAL;
-		goto err;
-	}
-
-	ds_data_user = (struct mdp_destination_scaler_data *)
-		commit->commit_v1.dest_scaler;
-	data_size = commit->commit_v1.dest_scaler_cnt *
-		sizeof(struct mdp_destination_scaler_data);
-	ds_data = kzalloc(data_size, GFP_KERNEL);
-	if (!ds_data) {
-		ret = -ENOMEM;
-		goto err;
-	}
-
-	ret = copy_from_user(ds_data, ds_data_user, data_size);
-	if (ret) {
-		pr_err("dest scaler data copy from user failed\n");
-		goto err;
-	}
-
-	commit->commit_v1.dest_scaler = ds_data;
-
-	for (i = 0; i < commit->commit_v1.dest_scaler_cnt; i++) {
-		scale_data = NULL;
-
-		if (ds_data[i].scale) {
-			scale_data_user = to_user_ptr(ds_data[i].scale);
-			data_size = sizeof(struct mdp_scale_data_v2);
-
-			scale_data = kzalloc(data_size, GFP_KERNEL);
-			if (!scale_data) {
-				ds_data[i].scale = 0;
-				ret = -ENOMEM;
-				goto err;
-			}
-
-			ds_data[i].scale = to_user_u64(scale_data);
-		}
-
-		if (scale_data && (ds_data[i].flags &
-					(MDP_DESTSCALER_SCALE_UPDATE |
-					MDP_DESTSCALER_ENHANCER_UPDATE))) {
-			ret = copy_from_user(scale_data, scale_data_user,
-					data_size);
-			if (ret) {
-				pr_err("scale data copy from user failed\n");
-				kfree(scale_data);
-				goto err;
-			}
-		}
-	}
-
-	return ret;
-
-err:
-	if (ds_data) {
-		for (i--; i >= 0; i--) {
-			scale_data = to_user_ptr(ds_data[i].scale);
-			kfree(scale_data);
-		}
-		kfree(ds_data);
-	}
-
-	return ret;
-}
-
 static int mdss_fb_atomic_commit_ioctl(struct fb_info *info,
 	unsigned long *argp, struct file *file)
 {
 	int ret, i = 0, j = 0, rc;
 	struct mdp_layer_commit  commit;
 	u32 buffer_size, layer_count;
-	struct mdp_input_layer *layer, *layer_list = NULL;
+	struct mdp_input_layer *layer, layer_list[MAX_LAYER_COUNT];
 	struct mdp_input_layer __user *input_layer_list;
-	struct mdp_output_layer *output_layer = NULL;
+	struct mdp_output_layer output_layer;
 	struct mdp_output_layer __user *output_layer_user;
-	struct mdp_destination_scaler_data *ds_data = NULL;
-	struct mdp_destination_scaler_data __user *ds_data_user;
+	struct mdp_frc_info *frc_info = NULL;
+	struct mdp_frc_info __user *frc_info_user;
 	struct msm_fb_data_type *mfd;
 	struct mdss_overlay_private *mdp5_data = NULL;
-	struct mdss_data_type *mdata;
 
 	ret = copy_from_user(&commit, argp, sizeof(struct mdp_layer_commit));
 	if (ret) {
@@ -5241,37 +4564,23 @@ static int mdss_fb_atomic_commit_ioctl(struct fb_info *info,
 
 	output_layer_user = commit.commit_v1.output_layer;
 	if (output_layer_user) {
-		buffer_size = sizeof(struct mdp_output_layer);
-		output_layer = kzalloc(buffer_size, GFP_KERNEL);
-		if (!output_layer) {
-			pr_err("unable to allocate memory for output layer\n");
-			return -ENOMEM;
-		}
-
-		ret = copy_from_user(output_layer,
-			output_layer_user, buffer_size);
+		ret = copy_from_user(&output_layer, output_layer_user,
+				     sizeof(output_layer));
 		if (ret) {
 			pr_err("layer list copy from user failed\n");
 			goto err;
 		}
-		commit.commit_v1.output_layer = output_layer;
+		commit.commit_v1.output_layer = &output_layer;
 	}
 
 	layer_count = commit.commit_v1.input_layer_cnt;
 	input_layer_list = commit.commit_v1.input_layers;
 
 	if (layer_count > MAX_LAYER_COUNT) {
-		pr_err("invalid layer count :%d\n", layer_count);
 		ret = -EINVAL;
 		goto err;
 	} else if (layer_count) {
 		buffer_size = sizeof(struct mdp_input_layer) * layer_count;
-		layer_list = kzalloc(buffer_size, GFP_KERNEL);
-		if (!layer_list) {
-			pr_err("unable to allocate memory for layers\n");
-			ret = -ENOMEM;
-			goto err;
-		}
 
 		ret = copy_from_user(layer_list, input_layer_list, buffer_size);
 		if (ret) {
@@ -5310,22 +4619,24 @@ static int mdss_fb_atomic_commit_ioctl(struct fb_info *info,
 		}
 	}
 
-	ds_data_user = commit.commit_v1.dest_scaler;
-	if ((ds_data_user) &&
-		(commit.commit_v1.dest_scaler_cnt)) {
-		mdata = mfd_to_mdata(mfd);
-		if (!mdata || !mdata->scaler_off ||
-				 !mdata->scaler_off->has_dest_scaler) {
-			pr_err("dest scaler not supported\n");
-			ret = -EPERM;
+	/* Copy Deterministic Frame Rate Control info from userspace */
+	frc_info_user = commit.commit_v1.frc_info;
+	if (frc_info_user) {
+		frc_info = kzalloc(sizeof(struct mdp_frc_info), GFP_KERNEL);
+		if (!frc_info) {
+			pr_err("unable to allocate memory for frc\n");
+			ret = -ENOMEM;
 			goto err;
 		}
-		ret = __mdss_fb_copy_destscaler_data(info, &commit);
+
+		ret = copy_from_user(frc_info, frc_info_user,
+			sizeof(struct mdp_frc_info));
 		if (ret) {
-			pr_err("copy dest scaler failed\n");
-			goto err;
+			pr_err("frc info copy from user failed\n");
+			goto frc_err;
 		}
-		ds_data = commit.commit_v1.dest_scaler;
+
+		commit.commit_v1.frc_info = frc_info;
 	}
 
 	ATRACE_BEGIN("ATOMIC_COMMIT");
@@ -5344,36 +4655,20 @@ static int mdss_fb_atomic_commit_ioctl(struct fb_info *info,
 
 		commit.commit_v1.input_layers = input_layer_list;
 		commit.commit_v1.output_layer = output_layer_user;
-		commit.commit_v1.dest_scaler  = ds_data_user;
+		commit.commit_v1.frc_info = frc_info_user;
 		rc = copy_to_user(argp, &commit,
 			sizeof(struct mdp_layer_commit));
-		if (rc) {
-			pr_err("copy to user for release & retire fence failed\n");
-			goto err;
-		}
-	}
-
-	if (output_layer_user) {
-		rc = copy_to_user(&output_layer_user->buffer.fence,
-			&output_layer->buffer.fence,
-			sizeof(int));
-
 		if (rc)
-			pr_err("copy to user for output fence failed");
+			pr_err("copy to user for release & retire fence failed\n");
 	}
 
+frc_err:
+	kfree(frc_info);
 err:
 	for (i--; i >= 0; i--) {
 		kfree(layer_list[i].scale);
 		layer_list[i].scale = NULL;
 		mdss_mdp_free_layer_pp_info(&layer_list[i]);
-	}
-	kfree(layer_list);
-	kfree(output_layer);
-	if (ds_data) {
-		for (i = 0; i < commit.commit_v1.dest_scaler_cnt; i++)
-			kfree(to_user_ptr(ds_data[i].scale));
-		kfree(ds_data);
 	}
 
 	return ret;
@@ -5467,9 +4762,6 @@ static int mdss_fb_mode_switch(struct msm_fb_data_type *mfd, u32 mode)
 	if (!mfd || !mfd->panel_info)
 		return -EINVAL;
 
-	/* make sure that we are idle while switching */
-	mdss_fb_wait_for_kickoff(mfd);
-
 	pinfo = mfd->panel_info;
 	if (pinfo->mipi.dms_mode == DYNAMIC_MODE_SWITCH_SUSPEND_RESUME) {
 		ret = mdss_fb_blanking_mode_switch(mfd, mode);
@@ -5506,6 +4798,12 @@ static int __ioctl_wait_idle(struct msm_fb_data_type *mfd, u32 cmd)
 	return ret;
 }
 
+#ifdef TARGET_HW_MDSS_MDP3
+static bool check_not_supported_ioctl(u32 cmd)
+{
+	return false;
+}
+#else
 static bool check_not_supported_ioctl(u32 cmd)
 {
 	return((cmd == MSMFB_OVERLAY_SET) || (cmd == MSMFB_OVERLAY_UNSET) ||
@@ -5514,6 +4812,7 @@ static bool check_not_supported_ioctl(u32 cmd)
 		(cmd == MSMFB_BUFFER_SYNC) || (cmd == MSMFB_OVERLAY_QUEUE) ||
 		(cmd == MSMFB_NOTIFY_UPDATE));
 }
+#endif
 
 /*
  * mdss_fb_do_ioctl() - MDSS Framebuffer ioctl function
@@ -5605,9 +4904,7 @@ int mdss_fb_do_ioctl(struct fb_info *info, unsigned int cmd,
 		ret = mdss_fb_mode_switch(mfd, dsi_mode);
 		break;
 	case MSMFB_ATOMIC_COMMIT:
- 		if (time_before(jiffies, last_input_time + msecs_to_jiffies(1000))) {
 		devfreq_boost_kick(DEVFREQ_MSM_CPUBW);
-		}
 		ret = mdss_fb_atomic_commit_ioctl(info, argp, file);
 		break;
 
@@ -5829,72 +5126,7 @@ void mdss_fb_report_panel_dead(struct msm_fb_data_type *mfd)
 	pr_err("Panel has gone bad, sending uevent - %s\n", envp[0]);
 }
 
-/*
-+ * mdss_prim_panel_fb_unblank() - Unblank primary panel FB
-+ * @timeout : >0 blank primary panel FB after timeout (ms)
-+ */
-int mdss_prim_panel_fb_unblank(int timeout)
-{
-	int ret = 0;
-	struct msm_fb_data_type *mfd = NULL;
-        printk("prim_fbi 00\n");
-	if (prim_fbi) {
-		printk("prim_fbi 01\n");
-		mfd = (struct msm_fb_data_type *)prim_fbi->par;
-		ret = wait_event_timeout(mfd->resume_wait_q,
-				!atomic_read(&mfd->resume_pending),
-				msecs_to_jiffies(WAIT_RESUME_TIMEOUT));
-		if (!ret) {
-			pr_info("Primary fb resume timeout\n");
-			return -ETIMEDOUT;
-		}
-		printk("prim_fbi 03\n");
-#ifdef CONFIG_FRAMEBUFFER_CONSOLE
-		printk("prim_fbi 04\n");
-		console_lock();
-#endif
-		if (!lock_fb_info(prim_fbi)) {
-#ifdef CONFIG_FRAMEBUFFER_CONSOLE
-		printk("prim_fbi 05\n");
-			console_unlock();
-#endif
-			return -ENODEV;
-		}
-		if (prim_fbi->blank == FB_BLANK_UNBLANK) {
-		printk("prim_fbi 06\n");
-			unlock_fb_info(prim_fbi);
-#ifdef CONFIG_FRAMEBUFFER_CONSOLE
-		printk("prim_fbi 07\n");
-			console_unlock();
-#endif
-		printk("prim_fbi 08\n");
-			return 0;
-		}
-		printk("prim_fbi 09\n");
-		wake_lock(&prim_panel_wakelock);
-		printk("fb_blank 01\n");
-		ret = fb_blank(prim_fbi, FB_BLANK_UNBLANK);
-		if (!ret) {
-			atomic_set(&prim_panel_is_on, true);
-			if (timeout > 0)
-				schedule_delayed_work(&prim_panel_work, msecs_to_jiffies(timeout));
-			else
-				wake_unlock(&prim_panel_wakelock);
-		} else
-			wake_unlock(&prim_panel_wakelock);
-		unlock_fb_info(prim_fbi);
-#ifdef CONFIG_FRAMEBUFFER_CONSOLE
-		printk("prim_fbi 10\n");
-		console_unlock();
-#endif
-		printk("return ret 01\n");
-		return ret;
-	}
 
-		printk("prim_fbi 11\n");
-	pr_err("primary panel is not existed\n");
-	return -EINVAL;
-}
 /*
  * mdss_fb_calc_fps() - Calculates fps value.
  * @mfd   : frame buffer structure associated with fb device.
@@ -5922,18 +5154,5 @@ void mdss_fb_calc_fps(struct msm_fb_data_type *mfd)
 			mfd->index, (unsigned int)fps/10, (unsigned int)fps%10);
 		mfd->fps_info.last_sampled_time_us = current_time_us;
 		mfd->fps_info.frame_count = 0;
-	}
-}
-
-void mdss_fb_idle_pc(struct msm_fb_data_type *mfd)
-{
-	struct mdss_overlay_private *mdp5_data = mfd_to_mdp5_data(mfd);
-
-	if (mdss_fb_is_power_off(mfd))
-		return;
-
-	if ((mfd->panel_info->type == MIPI_CMD_PANEL) && mdp5_data) {
-		pr_debug("Notify fb%d idle power collapsed\n", mfd->index);
-		sysfs_notify(&mfd->fbi->dev->kobj, NULL, "idle_power_collapse");
 	}
 }
