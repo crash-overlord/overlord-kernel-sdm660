@@ -125,3 +125,7 @@ out
 linaro32
 linaro64
 clang
+eva-tc
+gcc-32
+gcc-64
+sabermod-64
