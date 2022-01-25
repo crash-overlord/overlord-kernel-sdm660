@@ -652,17 +652,9 @@ static unsigned long lowmem_scan(struct shrinker *s, struct shrink_control *sc)
 			     p->comm, p->pid, oom_score_adj, tasksize);
 	}
 	if (selected) {
-		long cache_size, cache_limit, free;
-
-		if (test_task_flag(selected, TIF_MEMDIE) &&
-		    (test_task_state(selected, TASK_UNINTERRUPTIBLE))) {
-			lowmem_print(2, "'%s' (%d) is already killed\n",
-				     selected->comm,
-				     selected->pid);
-			rcu_read_unlock();
-			mutex_unlock(&scan_mutex);
-			return 0;
-		}
+		long cache_size = other_file * (long)(PAGE_SIZE / 1024);
+		long cache_limit = minfree * (long)(PAGE_SIZE / 1024);
+		long free = other_free * (long)(PAGE_SIZE / 1024);
 
 		task_lock(selected);
 		get_task_struct(selected);
