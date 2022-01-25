@@ -125,7 +125,7 @@ void wg_packet_send_handshake_cookie(struct wg_device *wg,
 static void keep_key_fresh(struct wg_peer *peer)
 {
 	struct noise_keypair *keypair;
-	bool send = false;
+	bool send;
 
 	rcu_read_lock_bh();
 	keypair = rcu_dereference_bh(peer->keypairs.current_keypair);
@@ -135,7 +135,7 @@ static void keep_key_fresh(struct wg_peer *peer)
 		 wg_birthdate_has_expired(keypair->sending.birthdate, REKEY_AFTER_TIME)));
 	rcu_read_unlock_bh();
 
-	if (send)
+	if (unlikely(send))
 		wg_packet_send_queued_handshake_initiation(peer, false);
 }
 
@@ -282,6 +282,8 @@ void wg_packet_tx_worker(struct work_struct *work)
 
 		wg_noise_keypair_put(keypair, false);
 		wg_peer_put(peer);
+		if (need_resched())
+			cond_resched();
 	}
 }
 
