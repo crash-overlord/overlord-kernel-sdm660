@@ -138,8 +138,17 @@ config CPU_FREQ_DEFAULT_GOV_INTERACTIVEX
 	  For more info, take a look at the cpu frequency driver help section.
 	  Performance governor will be the fallback governor.
 
+
+	  
+config CPU_FREQ_DEFAULT_GOV_DARKNESS
+	bool "darkness"
+	select CPU_FREQ_GOV_DARKNESS
+	
 endchoice
 
+config CPU_FREQ_GOV_DARKNESS
+	tristate "'darkness' cpufreq policy governor"
+	
 config CPU_FREQ_GOV_BLU_ACTIVE
 	tristate "'blu_active' cpufreq policy governor"
 	help

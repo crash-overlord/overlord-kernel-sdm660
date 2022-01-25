@@ -972,7 +972,7 @@ static void mdss_dsi_panel_bl_ctrl(struct mdss_panel_data *pdata,
 	 * for the backlight brightness. If the brightness is less
 	 * than it, the controller can malfunction.
 	 */
-	pr_debug("%s: bl_level:%d\n", __func__, bl_level);
+	pr_err("%s: bl_level:%d\n", __func__, bl_level);
 
 	/* do not allow backlight to change when panel in disable mode */
 	if (pdata->panel_disable_mode && (bl_level != 0))
@@ -1063,7 +1063,7 @@ static int mdss_dsi_panel_on(struct mdss_panel_data *pdata)
 	ctrl = container_of(pdata, struct mdss_dsi_ctrl_pdata,
 				panel_data);
 
-	pr_debug("%s: ndx=%d\n", __func__, ctrl->ndx);
+	pr_err("%s: ndx=%d\n", __func__, ctrl->ndx);
 
 	if (pinfo->dcs_cmd_by_left) {
 		if (ctrl->ndx != DSI_CTRL_LEFT)
@@ -1111,7 +1111,7 @@ static int mdss_dsi_panel_on(struct mdss_panel_data *pdata)
 				(void *)(unsigned long) MODE_UPDATE_ALL);
 
 end:
-	pr_debug("%s:-\n", __func__);
+	pr_err("%s:-\n", __func__);
 	return ret;
 }
 
@@ -1130,7 +1130,7 @@ static int mdss_dsi_post_panel_on(struct mdss_panel_data *pdata)
 	ctrl = container_of(pdata, struct mdss_dsi_ctrl_pdata,
 				panel_data);
 
-	pr_debug("%s: ctrl=%pK ndx=%d\n", __func__, ctrl, ctrl->ndx);
+	pr_err("%s: ctrl=%pK ndx=%d\n", __func__, ctrl, ctrl->ndx);
 
 	pinfo = &pdata->panel_info;
 	if (pinfo->dcs_cmd_by_left && ctrl->ndx != DSI_CTRL_LEFT)
@@ -1150,7 +1150,7 @@ static int mdss_dsi_post_panel_on(struct mdss_panel_data *pdata)
 	}
 
 end:
-	pr_debug("%s:-\n", __func__);
+	pr_err("%s:-\n", __func__);
 	return 0;
 }
 
@@ -1168,7 +1168,7 @@ static int mdss_dsi_panel_off(struct mdss_panel_data *pdata)
 	ctrl = container_of(pdata, struct mdss_dsi_ctrl_pdata,
 				panel_data);
 
-	pr_debug("%s: ctrl=%pK ndx=%d\n", __func__, ctrl, ctrl->ndx);
+	pr_err("%s: ctrl=%pK ndx=%d\n", __func__, ctrl, ctrl->ndx);
 
 	if (pinfo->dcs_cmd_by_left) {
 		if (ctrl->ndx != DSI_CTRL_LEFT)
@@ -1191,7 +1191,7 @@ static int mdss_dsi_panel_off(struct mdss_panel_data *pdata)
 #endif
 
 end:
-	pr_debug("%s:-\n", __func__);
+	pr_err("%s:-\n", __func__);
 	return 0;
 }
 
@@ -2346,7 +2346,8 @@ static int mdss_dsi_parse_panel_features(struct device_node *np,
 	pinfo->dcs_cmd_by_left = of_property_read_bool(np,
 		"qcom,dcs-cmd-by-left");
 
-	pinfo->ulps_feature_enabled = true;
+	pinfo->ulps_feature_enabled = of_property_read_bool(np,
+		"qcom,ulps-enabled");
 	pr_debug("%s: ulps feature %s\n", __func__,
 		(pinfo->ulps_feature_enabled ? "enabled" : "disabled"));
 
@@ -2442,11 +2443,10 @@ static void mdss_dsi_parse_panel_horizintal_line_idle(struct device_node *np,
 static int mdss_dsi_set_refresh_rate_range(struct device_node *pan_node,
 		struct mdss_panel_info *pinfo)
 {
-	int temp, rc = 0;
+	int rc = 0;
 	rc = of_property_read_u32(pan_node,
 			"qcom,mdss-dsi-min-refresh-rate",
-			&temp);
-	pinfo->min_fps = 30;
+			&pinfo->min_fps);
 	if (rc) {
 		pr_warn("%s:%d, Unable to read min refresh rate\n",
 				__func__, __LINE__);
@@ -2732,7 +2732,7 @@ static int mdss_dsi_panel_timing_from_dt(struct device_node *np,
 	rc = of_property_read_u32(np, "qcom,mdss-dsi-v-bottom-border", &tmp);
 	pt->timing.border_bottom = !rc ? tmp : 0;
 
-	rc = of_property_read_u32(np, "qcom,mdss-dsi-panel-framerate", &tmp);
+	tmp = 60;
 	pt->timing.frame_rate = !rc ? tmp : DEFAULT_FRAME_RATE;
 	rc = of_property_read_u64(np, "qcom,mdss-dsi-panel-clockrate", &tmp64);
 	if (rc == -EOVERFLOW) {
