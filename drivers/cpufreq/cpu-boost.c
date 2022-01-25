@@ -33,9 +33,13 @@ static DEFINE_PER_CPU(struct cpu_sync, sync_info);
 static struct workqueue_struct *cpu_boost_wq;
 
 static struct work_struct input_boost_work;
-static bool input_boost_enabled;
 
-static unsigned int input_boost_ms = 40;
+static bool max_boost_active = false;
+
+static unsigned int input_boost_enabled = 1;
+module_param(input_boost_enabled, uint, 0644);
+
+static unsigned int input_boost_ms = 70;
 module_param(input_boost_ms, uint, 0644);
 
 static bool sched_boost_on_input;
@@ -45,15 +49,14 @@ static bool sched_boost_active;
 
 static struct delayed_work input_boost_rem;
 static u64 last_input_time;
-#define MIN_INPUT_INTERVAL (150 * USEC_PER_MSEC)
+#define MIN_INPUT_INTERVAL (130 * USEC_PER_MSEC)
 
 static int set_input_boost_freq(const char *buf, const struct kernel_param *kp)
 {
 	int i, ntokens = 0;
 	unsigned int val, cpu;
 	const char *cp = buf;
-	bool enabled = false;
-
+	
 	while ((cp = strpbrk(cp + 1, " :")))
 		ntokens++;
 
@@ -63,7 +66,7 @@ static int set_input_boost_freq(const char *buf, const struct kernel_param *kp)
 			return -EINVAL;
 		for_each_possible_cpu(i)
 			per_cpu(sync_info, i).input_boost_freq = val;
-		goto check_enable;
+		goto out;
 	}
 
 	/* CPU:value pair */
@@ -82,15 +85,7 @@ static int set_input_boost_freq(const char *buf, const struct kernel_param *kp)
 		cp++;
 	}
 
-check_enable:
-	for_each_possible_cpu(i) {
-		if (per_cpu(sync_info, i).input_boost_freq) {
-			enabled = true;
-			break;
-		}
-	}
-	input_boost_enabled = enabled;
-
+out:
 	return 0;
 }
 
@@ -231,7 +226,7 @@ static void cpuboost_input_event(struct input_handle *handle,
 {
 	u64 now;
 
-	if (!input_boost_enabled)
+	if (input_boost_enabled < 1)
 		return;
 
 	now = ktime_to_us(ktime_get());
